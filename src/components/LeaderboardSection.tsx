@@ -1024,7 +1024,9 @@ export default function LeaderboardSection({
               ? onSsoSignIn
               : visibleFailure === "auth"
                 ? onSignIn
-                : () => void load()
+                : accountOffline
+                  ? onSessionRefresh
+                  : () => void load()
           }
         />
       ) : !visibleLeaderboard ? (
