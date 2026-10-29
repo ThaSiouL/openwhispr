@@ -2,15 +2,21 @@ import { useEffect, useRef, useState } from "react";
 
 // The original renderer remains the owner of recording, policy and rich UI.
 // GTK receives presentation and sends the same actions as the floating pill.
-export function useWaylandOverlay({ snapshot, onAction, getAudioLevel, isRecording }) {
+export function useWaylandOverlay({ snapshot, transcript, onAction, getAudioLevel, isRecording }) {
   const [enabled, setEnabled] = useState(false);
+  const [available, setAvailable] = useState(false);
   const [appearance, setAppearance] = useState(() => ({
     theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
     reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   }));
   const actionRef = useRef(onAction);
   actionRef.current = onAction;
-  const signature = JSON.stringify({ ...snapshot, ...appearance });
+  const signature = JSON.stringify({
+    ...snapshot,
+    ...appearance,
+    // Transcript content only leaves this renderer for the opted-in native UI.
+    ...(enabled ? { transcript: transcript ?? null } : {}),
+  });
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -38,6 +44,15 @@ export function useWaylandOverlay({ snapshot, onAction, getAudioLevel, isRecordi
       if (!disposed) setEnabled(value);
     });
     const unsubscribe = api.onWaylandOverlayAction((action, hovered) => {
+      if (action === "available") {
+        setAvailable(true);
+        return;
+      }
+      if (action === "unavailable") {
+        setAvailable(false);
+        setEnabled(false);
+        return;
+      }
       actionRef.current(action, hovered);
     });
     return () => {
@@ -61,4 +76,5 @@ export function useWaylandOverlay({ snapshot, onAction, getAudioLevel, isRecordi
     const timer = setInterval(sample, 50);
     return () => clearInterval(timer);
   }, [enabled, isRecording, snapshot.rich, getAudioLevel]);
+  return { enabled, available };
 }

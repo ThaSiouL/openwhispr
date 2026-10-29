@@ -13,7 +13,7 @@ test("standalone pill forwards committed state, real audio and existing actions"
     saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   };
-  for (const key of ["window", "document", "navigator", "MutationObserver"]) {
+  for (const key of ["window", "document", "navigator", "MutationObserver", "HTMLElement"]) {
     setGlobal(key, key === "window" ? browser : browser[key]);
   }
   setGlobal(
@@ -167,6 +167,73 @@ test("standalone pill forwards committed state, real audio and existing actions"
   assert.ok(container.querySelector(".voice-pill-position-center"));
   await send(pill, "mouseover", { relatedTarget: null });
   assert.ok(container.querySelector("[data-pill-tooltip]").className.includes("left-1/2"));
+  const transcript = {
+    open: true,
+    text: "Complete dictated text ".repeat(100),
+    measurementText: "Complete dictated text ".repeat(100),
+    phase: "live",
+    processing: false,
+    controlsVisible: true,
+    contentVisible: true,
+    stage: "content",
+    label: "Transcription en direct",
+    measurementRevision: 15,
+    copied: false,
+    labels: { waitingForInput: "Écoute", copy: "Copier", copied: "Copié", collapse: "Réduire" },
+  };
+  await React.act(async () =>
+    bridge.applyState({
+      ...snapshot,
+      revision: 11,
+      transcript,
+      language: "fr",
+      direction: "rtl",
+      dock: "live-transcript-bottom-left",
+    })
+  );
+  assert.equal(container.querySelectorAll(".voice-pill-control").length, 1);
+  assert.equal(pill.dataset.integratedWithPanel, "true");
+  assert.ok(container.querySelector(".live-transcript-panel.expanding-panel-surface-open"));
+  assert.equal(container.querySelector("main p").textContent, transcript.text.trim());
+  assert.equal(browser.document.documentElement.lang, "fr");
+  assert.equal(browser.document.documentElement.dir, "rtl");
+  assert.ok(
+    messages.some(
+      (message) =>
+        message.event === "geometry" && message.revision === 11 && message.rects.length >= 2
+    )
+  );
+  const copy = container.querySelector('button[aria-label="Copier"]');
+  await send(copy, "click");
+  assert.equal(actions().at(-1).action, "copy-transcript");
+  assert.equal(
+    copy.getAttribute("aria-label"),
+    "Copier",
+    "dispatch alone must not claim clipboard success"
+  );
+  await React.act(async () =>
+    bridge.applyState({
+      ...snapshot,
+      revision: 12,
+      transcript: { ...transcript, copied: true },
+      dock: "live-transcript-bottom-left",
+    })
+  );
+  assert.equal(copy.getAttribute("aria-label"), "Copié");
+  await send(container.querySelector('button[aria-label="Réduire"]'), "click");
+  assert.equal(actions().at(-1).action, "collapse-transcript");
+  await send(container.querySelector("main"), "mouseover", { relatedTarget: null });
+  assert.deepEqual(actions().at(-1), { event: "action", action: "hold-transcript", hovered: true });
+  await React.act(async () =>
+    bridge.applyState({
+      ...snapshot,
+      revision: 13,
+      transcript: { ...transcript, open: false },
+      dock: "bottom-left",
+    })
+  );
+  assert.equal(pill.dataset.integratedWithPanel, undefined);
+  assert.equal(container.querySelectorAll(".voice-pill-control").length, 1);
   delete browser.webkit;
   await React.act(async () => bridge.applyState({ ...snapshot, revision: 10, state: "idle" }));
   assert.ok(

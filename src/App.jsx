@@ -635,22 +635,54 @@ export default function App() {
     hasLiveActivity: pillHasLiveActivity,
   });
 
-  useWaylandOverlay({
+  const transcriptMeasurement = useRef({ text: null, mounted: false, revision: 0 });
+  if (
+    transcriptMeasurement.current.text !== liveTranscript.measurementText ||
+    transcriptMeasurement.current.mounted !== liveTranscript.mounted
+  ) {
+    transcriptMeasurement.current = {
+      text: liveTranscript.measurementText,
+      mounted: liveTranscript.mounted,
+      revision: transcriptMeasurement.current.revision + 1,
+    };
+  }
+  const nativeTranscriptReturn = useRef(false);
+  if (liveTranscript.mounted && !assistant.mounted) nativeTranscriptReturn.current = true;
+  if (assistant.mounted) nativeTranscriptReturn.current = false;
+  const nativeRich =
+    assistant.mounted ||
+    isCommandMenuOpen ||
+    toastCount > 0 ||
+    dictationErrorPillHandoffActive ||
+    (panelReturnResizeActive && !nativeTranscriptReturn.current);
+  const [nativeTranscriptCopied, setNativeTranscriptCopied] = useState(false);
+  const nativeCopyText = useRef(liveTranscript.text);
+  nativeCopyText.current = liveTranscript.text;
+  useEffect(() => setNativeTranscriptCopied(false), [liveTranscript.text]);
+  useEffect(() => {
+    if (!nativeTranscriptCopied) return undefined;
+    const timer = setTimeout(() => setNativeTranscriptCopied(false), 1600);
+    return () => clearTimeout(timer);
+  }, [nativeTranscriptCopied]);
+  const nativeOverlay = useWaylandOverlay({
     snapshot: {
       state: commonPillState,
-      rich:
-        anyPanelMounted ||
-        isCommandMenuOpen ||
-        toastCount > 0 ||
-        dictationErrorPillHandoffActive ||
-        panelReturnResizeActive,
-      suppressed: pillVisuallySuppressed,
+      rich: nativeRich,
+      suppressed: resolvePillVisualSuppression({
+        dictationErrorSuppressed: dictationErrorSuppressesPill,
+        assistantActionsSuppressed: assistantActionsSuppressPill,
+        assistantClosing: assistant.closing,
+        panelReturnResizeActive: panelReturnResizeActive && !nativeTranscriptReturn.current,
+        hasLiveActivity: pillHasLiveActivity,
+      }),
       expanded: isCompactPill,
       collapseToLogo: listeningEntrance.collapseToLogo || assistantFooter.collapsePillToLogo,
       waveformVisible: listeningEntrance.waveformVisible,
       showExpandChevron: canReopenLiveTranscript && isHovered,
       horizontalDirection: voiceHorizontalDirection,
-      dock: panelStartPosition === "center" ? "center" : `bottom-${voiceHorizontalDirection}`,
+      dock: voicePillDock,
+      language: document.documentElement.lang,
+      direction: document.documentElement.dir || "ltr",
       agentMode: agentModeActive,
       interactive: pillIsInteractive,
       cancelVisible: voicePillInteraction.cancelVisible,
@@ -659,9 +691,54 @@ export default function App() {
         cancel: isRecording ? t("app.buttons.cancelRecording") : t("app.buttons.cancelProcessing"),
       },
     },
-    onAction: (action, hovered) => {
+    transcript:
+      liveTranscript.mounted && activeVoicePanelMode !== "assistant"
+        ? {
+            open: liveTranscript.open,
+            text: liveTranscript.text,
+            measurementText: liveTranscript.measurementText,
+            phase: liveTranscript.phase,
+            processing: isProcessing && !isAssistantVoice,
+            controlsVisible: liveTranscriptEntrance.controlsVisible,
+            contentVisible: liveTranscriptEntrance.contentVisible,
+            stage: liveTranscriptEntrance.coreStage,
+            label: t("transcriptionPreview.label"),
+            measurementRevision: transcriptMeasurement.current.revision,
+            copied: nativeTranscriptCopied,
+            labels: {
+              waitingForInput: t("transcriptionPreview.waitingForInput"),
+              copy: t("transcriptionPreview.copy"),
+              copied: t("transcriptionPreview.copied"),
+              collapse: t("transcriptionPreview.collapse", { defaultValue: "Collapse transcript" }),
+            },
+          }
+        : null,
+    onAction: async (action, hovered) => {
       if (action === "hover") setIsHovered(hovered);
-      else if (action === "activate") activateVoicePill();
+      else if (action === "collapse-transcript" && liveTranscript.mounted) {
+        liveTranscript.close({ suppress: true });
+      } else if (action === "hold-transcript" && liveTranscript.mounted) {
+        liveTranscript.holdFinal(hovered);
+      } else if (action === "copy-transcript" && liveTranscript.mounted) {
+        const text = liveTranscript.text.trim();
+        if (!text || !window.electronAPI?.writeClipboard) return;
+        try {
+          const result = await window.electronAPI.writeClipboard(text);
+          if (nativeCopyText.current.trim() === text)
+            setNativeTranscriptCopied(result?.success === true);
+        } catch {
+          setNativeTranscriptCopied(false);
+        }
+      } else if (
+        action === "transcript-height" &&
+        liveTranscript.open &&
+        hovered?.measurementRevision === transcriptMeasurement.current.revision &&
+        Number.isFinite(hovered.height) &&
+        hovered.height > 0 &&
+        hovered.height <= 538
+      ) {
+        void liveTranscript.requestHeight(hovered.height, liveTranscript.measurementText);
+      } else if (action === "activate") activateVoicePill();
       else if (action === "cancel") {
         if (isRecording) cancelRecording();
         else if (isProcessing) cancelProcessing();
@@ -673,6 +750,13 @@ export default function App() {
     getAudioLevel,
     isRecording,
   });
+  const nativeTranscriptOwned = nativeOverlay.available && !nativeRich && liveTranscript.open;
+  const nativeTranscriptWasOwned = useRef(false);
+  const holdTranscriptFinal = liveTranscript.holdFinal;
+  useEffect(() => {
+    if (nativeTranscriptWasOwned.current && !nativeTranscriptOwned) holdTranscriptFinal(false);
+    nativeTranscriptWasOwned.current = nativeTranscriptOwned;
+  }, [nativeTranscriptOwned, holdTranscriptFinal]);
 
   useLinuxPillInteractivity({
     pillRef: pillPresenceRef,
@@ -863,7 +947,9 @@ export default function App() {
         measurementRevision={
           activeVoicePanelMode === "live-transcript" ? liveTranscript.measurementText : null
         }
-        onPreferredHeightChange={liveTranscript.requestHeight}
+        onPreferredHeightChange={
+          nativeOverlay.available && !nativeRich ? undefined : liveTranscript.requestHeight
+        }
         onClosingFadeComplete={assistant.completeContentFade}
       >
         {activeVoicePanelMode === "assistant" && assistant.mounted && (

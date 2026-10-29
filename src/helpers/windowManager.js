@@ -225,7 +225,10 @@ class WindowManager {
       const overlay = new WaylandOverlay({
         scriptPath: overlayScriptPath(app),
         uiUri: overlayUiUri(app),
-        onReady: () => this._syncWaylandOverlay(),
+        onReady: () => {
+          this.mainWindow?.webContents.send("wayland-overlay-action", "available");
+          this._syncWaylandOverlay();
+        },
         onVisibility: (visible) => {
           this._waylandOverlayVisible = visible;
           this._applyWaylandOverlayHostVisibility();
@@ -252,6 +255,7 @@ class WindowManager {
         onFailure: (reason) => {
           this._waylandOverlayFailed = true;
           this._waylandOverlayVisible = false;
+          this.mainWindow?.webContents.send("wayland-overlay-action", "unavailable");
           debugLogger.warn("GTK overlay unavailable; using Electron", { reason }, "window");
           this._applyWaylandOverlayHostVisibility();
         },
@@ -288,7 +292,8 @@ class WindowManager {
       visible: Boolean(native && this._dictationPanelRequestedVisible && !snapshot.suppressed),
       position: this._panelStartPosition,
       monitor: display?.bounds || null,
-      viewport: WINDOW_SIZES.BASE,
+      viewport: bounds ? { width: bounds.width, height: bounds.height } : WINDOW_SIZES.BASE,
+      bounds: bounds || null,
     });
     this._applyWaylandOverlayHostVisibility();
   }
@@ -626,6 +631,10 @@ class WindowManager {
     return this._enqueueMainWindowMutation(() => this._performMainWindowResize(sizeKey));
   }
 
+  async _waitForWaylandOverlayLayout() {
+    if (this._usesWaylandOverlay()) await this._waylandOverlay.waitForCurrentState?.();
+  }
+
   resizeAssistantWindowToContent(surfaceHeight) {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) {
       return { success: false, message: "Window not available" };
@@ -791,6 +800,7 @@ class WindowManager {
         this._lastResizeBounds = restored;
         this._activeHorizontalDirection = null;
         this._notifyMainWindowHorizontalDirection();
+        await this._waitForWaylandOverlayLayout();
         return { success: true, bounds: restored, changed: false };
       }
       await this._prepareRendererForMainWindowResize(restored, restoreAnchor);
@@ -801,6 +811,7 @@ class WindowManager {
       this.mainWindow.setBounds(restored);
       this._activeHorizontalDirection = null;
       this._notifyMainWindowHorizontalDirection();
+      await this._waitForWaylandOverlayLayout();
       return { success: true, bounds: restored, changed: true };
     }
 
@@ -860,7 +871,10 @@ class WindowManager {
       if (sizeKey === "BASE") {
         this._activeHorizontalDirection = null;
         this._notifyMainWindowHorizontalDirection();
+      } else {
+        this._syncWaylandOverlay();
       }
+      await this._waitForWaylandOverlayLayout();
       return { success: true, bounds: currentBounds, changed: false };
     }
 
@@ -873,7 +887,11 @@ class WindowManager {
     if (sizeKey === "BASE") {
       this._activeHorizontalDirection = null;
       this._notifyMainWindowHorizontalDirection();
+    } else {
+      this._syncWaylandOverlay();
     }
+
+    await this._waitForWaylandOverlayLayout();
 
     return { success: true, bounds: newBounds, changed: true };
   }

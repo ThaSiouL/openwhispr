@@ -2,6 +2,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { VoicePill, type VoicePillState } from "./VoicePill";
 import { LiquidCancelButton } from "./LiquidCancelButton";
 import { PillTooltip } from "./PillTooltip";
+import { VoiceModePanelCore, type VoiceModePanelStage } from "./VoiceModePanelCore";
+import { LiveTranscriptPanel, type LiveTranscriptPhase } from "./LiveTranscriptPanel";
 import {
   VOICE_PILL_FOOTPRINT,
   isVoicePillActivationKey,
@@ -18,10 +20,26 @@ interface OverlaySnapshot {
   waveformVisible: boolean;
   showExpandChevron: boolean;
   horizontalDirection: "left" | "right";
-  dock: "center" | "bottom-left" | "bottom-right";
+  dock: string;
+  language?: string;
+  direction?: "ltr" | "rtl";
   theme: "light" | "dark";
   reducedMotion: boolean;
   labels: { tooltip: string; cancel: string };
+  transcript?: {
+    open: boolean;
+    text: string;
+    measurementText: string;
+    phase: LiveTranscriptPhase;
+    processing: boolean;
+    controlsVisible: boolean;
+    contentVisible: boolean;
+    stage: VoiceModePanelStage;
+    label: string;
+    measurementRevision: number;
+    copied: boolean;
+    labels: { waitingForInput: string; copy: string; copied: string; collapse: string };
+  } | null;
 }
 
 declare global {
@@ -65,6 +83,7 @@ export function WaylandOverlay() {
   const audioLevel = useRef<number | null>(null);
   const hasDragged = useRef(false);
   const presenceRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLDivElement>(null);
   const refreshGeometry = useRef<(duration?: number) => void>(() => {});
   const reportGeometry = useRef(() => {});
@@ -74,10 +93,12 @@ export function WaylandOverlay() {
   useLayoutEffect(() => {
     const presence = presenceRef.current!;
     const pill = pillRef.current!;
+    const root = rootRef.current!;
     let frame = 0;
     let until = 0;
     let lastGeometry = "";
     let tooltip: Element | null = null;
+    let panel: Element | null = null;
     const rect = (element: Element) => {
       const bounds = element.getBoundingClientRect();
       // Avoid pipe traffic for subpixel layout noise while retaining native
@@ -94,6 +115,10 @@ export function WaylandOverlay() {
       frame = 0;
       const rects = [rect(presence)];
       if (tooltip) rects.push(rect(tooltip));
+      const visiblePanel = root.querySelector(
+        ".live-transcript-panel.expanding-panel-surface-open"
+      );
+      if (visiblePanel) rects.push(rect(visiblePanel));
       const geometry = JSON.stringify({
         event: "geometry",
         revision: geometryRevision.current,
@@ -119,21 +144,29 @@ export function WaylandOverlay() {
     resize.observe(presence);
     resize.observe(pill);
     const mutation = new MutationObserver(() => {
-      const next = presence.querySelector("[data-pill-tooltip]");
+      const next = root.querySelector("[data-pill-tooltip]");
       if (next !== tooltip) {
         if (tooltip) resize.unobserve(tooltip);
         tooltip = next;
         if (tooltip) resize.observe(tooltip);
       }
+      const nextPanel = root.querySelector(".live-transcript-panel");
+      if (nextPanel !== panel) {
+        if (panel) resize.unobserve(panel);
+        panel = nextPanel;
+        if (panel) resize.observe(panel);
+      }
       schedule(200);
     });
-    mutation.observe(presence, { childList: true, subtree: true });
+    mutation.observe(root, { childList: true, subtree: true });
     const onResize = () => schedule();
     window.addEventListener("resize", onResize);
     window.openwhisprOverlay = {
       applyState(next) {
         document.documentElement.classList.toggle("dark", next.theme === "dark");
         document.documentElement.dataset.overlayReducedMotion = String(next.reducedMotion);
+        document.documentElement.lang = next.language || "en";
+        document.documentElement.dir = next.direction || "ltr";
         setSnapshot(next);
         schedule(650);
       },
@@ -177,9 +210,16 @@ export function WaylandOverlay() {
     snapshot.state !== "thinking" &&
     (snapshot.state === "recording" || snapshot.expanded);
   const footprint = compact ? VOICE_PILL_FOOTPRINT.recording : VOICE_PILL_FOOTPRINT.idle;
+  const transcript = snapshot.transcript;
+  const requestTranscriptHeight = useCallback(
+    (height: number, measurementRevision?: string | number | null) => {
+      postMessage({ event: "action", action: "transcript-height", height, measurementRevision });
+    },
+    []
+  );
 
   return (
-    <div className="dictation-window">
+    <div ref={rootRef} className="dictation-window">
       <div
         className={`voice-pill-position voice-pill-position-${snapshot.dock} fixed z-50`}
         // GTK compensates a drag's dock change from these final local bounds.
@@ -199,14 +239,17 @@ export function WaylandOverlay() {
           <PillTooltip
             content={snapshot.labels.tooltip}
             align={snapshot.dock === "center" ? "center" : snapshot.horizontalDirection}
+            disabled={Boolean(transcript)}
           >
             <VoicePill
               ref={pillRef}
-              variant="floating"
+              variant={transcript?.open ? "panel" : "floating"}
               state={snapshot.state}
               expanded={snapshot.expanded}
               collapseToLogo={snapshot.collapseToLogo}
               waveformVisible={snapshot.waveformVisible}
+              waveformOnlyWhileRecording={Boolean(transcript)}
+              integratedWithPanel={transcript?.open}
               liquidFused={cancelSkinActive}
               agentMode={snapshot.agentMode}
               showExpandChevron={snapshot.showExpandChevron}
@@ -233,7 +276,7 @@ export function WaylandOverlay() {
           </PillTooltip>
           <LiquidCancelButton
             visible={snapshot.cancelVisible}
-            fused
+            fused={!transcript?.open}
             pillWidth={footprint.width}
             pillHeight={footprint.height}
             pillState={snapshot.state}
@@ -245,6 +288,33 @@ export function WaylandOverlay() {
           />
         </div>
       </div>
+      <VoiceModePanelCore
+        mode={transcript ? "live-transcript" : null}
+        open={Boolean(transcript?.open)}
+        stage={transcript?.stage}
+        horizontalDirection={snapshot.horizontalDirection}
+        label={transcript?.label}
+        measurementRevision={transcript?.measurementRevision}
+        onPreferredHeightChange={requestTranscriptHeight}
+      >
+        {transcript && (
+          <LiveTranscriptPanel
+            text={transcript.text}
+            measurementText={transcript.measurementText}
+            phase={transcript.phase}
+            processing={transcript.processing}
+            controlsVisible={transcript.controlsVisible}
+            contentVisible={transcript.contentVisible}
+            labels={{ label: transcript.label, ...transcript.labels }}
+            copied={transcript.copied}
+            onCopy={() => postMessage({ event: "action", action: "copy-transcript" })}
+            onCollapse={() => postMessage({ event: "action", action: "collapse-transcript" })}
+            onHoldChange={(held) =>
+              postMessage({ event: "action", action: "hold-transcript", hovered: held })
+            }
+          />
+        )}
+      </VoiceModePanelCore>
     </div>
   );
 }

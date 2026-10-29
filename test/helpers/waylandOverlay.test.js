@@ -73,6 +73,86 @@ const snapshot = {
   labels: { tooltip: "Waiting for microphone", cancel: "Cancel recording" },
 };
 
+const transcript = {
+  open: true,
+  text: "A complete transcript ".repeat(1500),
+  measurementText: "A complete transcript ".repeat(1500),
+  phase: "live",
+  processing: false,
+  controlsVisible: true,
+  contentVisible: true,
+  stage: "content",
+  label: "Live transcript",
+  measurementRevision: 42,
+  copied: false,
+  labels: { waitingForInput: "Listening", copy: "Copy", copied: "Copied", collapse: "Collapse" },
+};
+
+test("native transcript retains complete text and validates measurement actions", () => {
+  const state = normalizeOverlaySnapshot({
+    ...snapshot,
+    dock: "live-transcript-bottom-left",
+    transcript,
+  });
+  assert.equal(state.transcript.text, transcript.text);
+  assert.equal(state.transcript.measurementText, transcript.measurementText);
+  assert.equal(
+    normalizeOverlaySnapshot({ ...snapshot, transcript: { ...transcript, phase: "arbitrary" } }),
+    null
+  );
+  const h = harness();
+  h.receive({ event: "ready" });
+  h.overlay.update({ ...state, visible: true });
+  assert.equal(h.writes[0].transcript.text, transcript.text);
+  const height = {
+    event: "action",
+    action: "transcript-height",
+    revision: 1,
+    height: 220,
+    measurementRevision: 42,
+  };
+  h.receive(height);
+  h.receive({ ...height, measurementRevision: 41 });
+  h.receive({ ...height, height: Infinity });
+  h.receive({ ...height, height: 539 });
+  h.receive({ event: "action", action: "hold-transcript", revision: 1, hovered: true });
+  h.receive({ event: "action", action: "hold-transcript", revision: 1, hovered: "true" });
+  h.receive({ event: "action", action: "copy-transcript", revision: 1 });
+  assert.deepEqual(h.actions, [
+    ["transcript-height", { height: 220, measurementRevision: 42 }],
+    ["hold-transcript", true],
+    ["copy-transcript", undefined],
+  ]);
+  h.overlay.update({
+    ...state,
+    transcript: { ...transcript, text: "x".repeat(1024 * 1024) },
+    visible: true,
+  });
+  assert.deepEqual(h.failures, ["GTK overlay state is too large"]);
+});
+
+test("content resize waits for the current rendered viewport acknowledgement and releases on failure", async () => {
+  const h = harness();
+  await h.overlay.waitForCurrentState();
+  h.receive({ event: "ready" });
+  h.overlay.update({ ...snapshot, visible: true });
+  let settled = false;
+  const wait = h.overlay.waitForCurrentState().then(() => (settled = true));
+  h.overlay.update({ ...snapshot, visible: true, viewport: { width: 442, height: 300 } });
+  h.receive({ event: "visibility", revision: 1, visible: true });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  h.receive({ event: "visibility", revision: 2, visible: true });
+  await wait;
+  assert.equal(settled, true);
+  await h.overlay.waitForCurrentState();
+  h.overlay.update({ ...snapshot, visible: false });
+  const failureWait = h.overlay.waitForCurrentState();
+  h.child.emit("exit", 1);
+  await failureWait;
+  assert.equal(h.overlay.stateWaiters.length, 0);
+});
+
 test("GTK is opt-in and requires Wayland plus the retained XWayland engine", () => {
   const env = { OPENWHISPR_WAYLAND_OVERLAY: "gtk", WAYLAND_DISPLAY: "wayland-1", DISPLAY: ":1" };
   assert.equal(isWaylandOverlayEnabled("linux", env), true);
@@ -83,7 +163,8 @@ test("GTK is opt-in and requires Wayland plus the retained XWayland engine", () 
 });
 
 test("snapshot validation preserves presentation states and rejects oversized labels", () => {
-  assert.deepEqual(normalizeOverlaySnapshot({ ...snapshot, transcript: "private" }), snapshot);
+  assert.deepEqual(normalizeOverlaySnapshot({ ...snapshot, transcript: null }), snapshot);
+  assert.equal(normalizeOverlaySnapshot({ ...snapshot, transcript: "invalid" }), null);
   assert.equal(normalizeOverlaySnapshot({ ...snapshot, state: "arbitrary" }), null);
   assert.equal(normalizeOverlaySnapshot({ ...snapshot, rich: 0 }), null);
   assert.equal(normalizeOverlaySnapshot({ ...snapshot, theme: "system" }), null);

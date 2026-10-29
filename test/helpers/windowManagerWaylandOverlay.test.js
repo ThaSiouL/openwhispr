@@ -52,6 +52,7 @@ Module._load = function (request, parent, isMain) {
       return {
         WINDOW_SIZES: { BASE: { width: 208, height: 120 } },
         NOTIFICATION_WINDOW_CONFIG: { width: 400, height: 100 },
+        WindowPositionUtil: { clampToWorkArea: ({ x, y }) => ({ x, y }) },
       };
     }
     if (request === "./debugLogger") return { warn() {} };
@@ -128,9 +129,48 @@ test("fallback restores the recording renderer without retry loops", () => {
   h.helper.callbacks.onFailure("dependency missing");
   assert.equal(h.win.isVisible(), true);
   assert.equal(h.manager.getWaylandOverlayEnabled(), false);
+  assert.deepEqual(h.sent.at(-1), ["wayland-overlay-action", "unavailable"]);
   const previous = h.helper;
   h.manager.publishWaylandOverlayState(snapshot);
   assert.equal(helper, previous);
+});
+
+test("GTK mirrors the expanded transcript viewport and its screen position", () => {
+  const h = harness();
+  h.win.getBounds = () => ({ x: 150, y: 480, width: 466, height: 562 });
+  h.helper.becomeReady();
+  const state = h.helper.updates.at(-1);
+  assert.deepEqual(state.viewport, { width: 466, height: 562 });
+  assert.deepEqual(state.bounds, { x: 150, y: 480, width: 466, height: 562 });
+  assert.deepEqual(h.sent.at(-1), ["wayland-overlay-action", "available"]);
+});
+
+test("a transcript content resize waits for GTK layout before revealing text", async () => {
+  const h = harness();
+  h.helper.becomeReady();
+  let bounds = h.win.getBounds();
+  h.win.getBounds = () => bounds;
+  h.win.setBounds = (value) => {
+    bounds = value;
+  };
+  h.manager._resolveMainWindowSize = () => ({ width: 466, height: 340 });
+  h.manager._waylandOverlayManualDirection = "right";
+  h.manager._prepareRendererForMainWindowResize = async () => {};
+  let acknowledge;
+  h.helper.waitForCurrentState = () =>
+    new Promise((resolve) => {
+      acknowledge = resolve;
+    });
+  let completed = false;
+  const resize = h.manager._performMainWindowResize("ASSISTANT_CONTENT").then(() => {
+    completed = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(h.helper.updates.at(-1).viewport, { width: 466, height: 340 });
+  assert.equal(completed, false);
+  acknowledge();
+  await resize;
+  assert.equal(completed, true);
 });
 
 test("streaming partials keep the collapsed transcript native until the renderer opens rich UI", async () => {
@@ -173,7 +213,7 @@ test("native toggles stay native and helper actions go to the existing renderer"
   assert.deepEqual(h.sent.at(-1), ["wayland-overlay-action", "activate", undefined]);
   h.manager._onboardingActive = true;
   h.helper.callbacks.onAction("activate");
-  assert.equal(h.sent.length, 1);
+  assert.equal(h.sent.length, 2);
 });
 
 test("renderer reload cleanup stops GTK and restores the requested Electron surface", () => {

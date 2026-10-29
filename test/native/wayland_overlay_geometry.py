@@ -26,8 +26,10 @@ class GeometryTests(unittest.TestCase):
         h.revision = 1
         h.wanted_visible = True
         h.dragged = True
+        h.native_dragged = True
         h.pill_rect = {"x": 156, "y": 68, "width": 40, "height": 40}
         h.input_rects = []
+        h.pending_dock_anchor = None
         h.webview = SimpleNamespace(set_size_request=lambda *args: None)
         h.window = SimpleNamespace(resize=lambda *args: None)
         h.set_monitor = lambda *args: None
@@ -50,6 +52,39 @@ class GeometryTests(unittest.TestCase):
         h.drag_end()
         position = self.events[0]
         self.assertEqual([position[key] for key in ("x", "y", "width", "height")], [600, 956, 208, 120])
+
+    def test_transcript_uses_the_coordinated_viewport_without_dock_compensation(self):
+        h = self.host
+        h.apply({"revision": 2, "visible": True, "dock": "live-transcript-bottom-left",
+                 "horizontalDirection": "right", "position": "bottom-right",
+                 "transcript": {"open": True}, "viewport": {"width": 466, "height": 340},
+                 "bounds": {"x": 342, "y": 700, "width": 466, "height": 340}})
+        self.assertEqual(h.viewport, (466, 340))
+        self.assertEqual((h.left, h.bottom), (342, 40))
+        self.assertIsNone(h.pending_dock_anchor)
+
+    def test_render_commit_waits_for_the_native_viewport_allocation(self):
+        h = self.host
+        h.viewport = (466, 340)
+        h.rendered_revision = h.revision
+        h.window.get_mapped = lambda: True
+        h.webview.get_allocated_width = lambda: 208
+        h.webview.get_allocated_height = lambda: 120
+        h.acknowledge()
+        self.assertEqual(self.events, [])
+        h.webview.get_allocated_width = lambda: 466
+        h.webview.get_allocated_height = lambda: 340
+        h.acknowledge()
+        self.assertEqual(self.events, [{"event": "visibility", "revision": 1, "visible": True}])
+
+    def test_integrated_transcript_pill_does_not_start_a_drag(self):
+        h = self.host
+        h.snapshot["transcript"] = {"open": True}
+        denied = []
+        h.drag = SimpleNamespace(set_state=denied.append)
+        h.drag_begin(None, 160, 80)
+        self.assertFalse(h.drag_allowed)
+        self.assertEqual(len(denied), 1)
 
 
 if __name__ == "__main__":

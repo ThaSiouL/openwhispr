@@ -1565,14 +1565,29 @@ declare global {
         waveformVisible: boolean;
         showExpandChevron: boolean;
         horizontalDirection: "left" | "right";
-        dock: "center" | "bottom-left" | "bottom-right";
+        dock: string;
+        language?: string;
+        direction?: "ltr" | "rtl";
         theme: "light" | "dark";
         reducedMotion: boolean;
         labels: { tooltip: string; cancel: string };
       }) => void;
       waylandOverlayAudioLevel: (level: number | null) => void;
       onWaylandOverlayAction: (
-        callback: (action: "activate" | "cancel" | "menu" | "hover", hovered?: boolean) => void
+        callback: (
+          action:
+            | "activate"
+            | "cancel"
+            | "menu"
+            | "hover"
+            | "available"
+            | "unavailable"
+            | "collapse-transcript"
+            | "hold-transcript"
+            | "copy-transcript"
+            | "transcript-height",
+          payload?: boolean | { height: number; measurementRevision: number }
+        ) => void
       ) => () => void;
       toggleAgentPanelDictation?: () => Promise<{ success: boolean }>;
       cancelAgentPanelDictation?: () => Promise<{ success: boolean }>;

@@ -15,6 +15,7 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gdk, GLib, Gtk, GtkLayerShell, WebKit2  # noqa: E402
 
 MAX_MESSAGE_BYTES = 16384
+MAX_STATE_BYTES = 1024 * 1024
 
 
 def emit(message):
@@ -32,6 +33,7 @@ class Overlay:
         self.dragged = False
         self.drag_allowed = False
         self.manual_position = None
+        self.native_dragged = False
         self.placement = None
         self.geometry = None
         self.snapshot = {}
@@ -83,6 +85,7 @@ class Overlay:
         self.webview.connect("load-failed", self.load_failed)
         self.webview.connect("web-process-terminated", lambda *_: self.fail("Overlay renderer exited"))
         self.webview.connect("permission-request", self.deny_permission)
+        self.webview.connect("size-allocate", lambda *_: self.acknowledge())
         self.window.add(self.webview)
         self.drag = Gtk.GestureDrag.new(self.webview)
         self.drag.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
@@ -136,12 +139,19 @@ class Overlay:
                 self.acknowledge()
             elif event == "action" and self.wanted_visible:
                 action = message.get("action")
-                if action in ("activate", "cancel", "menu", "hover"):
+                if action in ("activate", "cancel", "menu", "hover", "collapse-transcript",
+                              "hold-transcript", "copy-transcript", "transcript-height"):
                     payload = {"event": "action", "revision": self.revision, "action": action}
-                    if action == "hover":
+                    if action in ("hover", "hold-transcript"):
                         if not isinstance(message.get("hovered"), bool):
                             return
                         payload["hovered"] = message["hovered"]
+                    elif action == "transcript-height":
+                        height, revision = message.get("height"), message.get("measurementRevision")
+                        if (not isinstance(height, (int, float)) or not math.isfinite(height)
+                                or not 0 < height <= 538 or type(revision) is not int or revision < 0):
+                            return
+                        payload.update(height=height, measurementRevision=revision)
                     emit(payload)
             elif event == "geometry":
                 if message.get("revision") != self.revision:
@@ -220,7 +230,8 @@ class Overlay:
     def drag_begin(self, _gesture, x, y):
         self.dragged = False
         rect = self.pill_rect
-        self.drag_allowed = bool(rect and rect["x"] <= x <= rect["x"] + rect["width"]
+        self.drag_allowed = bool(not self.snapshot.get("transcript") and rect
+                                 and rect["x"] <= x <= rect["x"] + rect["width"]
                                  and rect["y"] <= y <= rect["y"] + rect["height"])
         if not self.drag_allowed:
             self.drag.set_state(Gtk.EventSequenceState.DENIED)
@@ -239,6 +250,7 @@ class Overlay:
 
     def drag_end(self, *_):
         if self.dragged and self.geometry and self.pill_rect:
+            self.native_dragged = True
             self.report_position()
         self.pending_drag = (self.dragged, False)
         self.dispatch_javascript()
@@ -293,6 +305,8 @@ class Overlay:
 
     def acknowledge(self):
         visible = self.window.get_mapped()
+        if visible and (self.webview.get_allocated_width(), self.webview.get_allocated_height()) != self.viewport:
+            return False
         if visible == self.wanted_visible and (not visible or self.rendered_revision == self.revision):
             emit({"event": "visibility", "revision": self.revision, "visible": visible})
         return False
@@ -300,8 +314,11 @@ class Overlay:
     def apply(self, state):
         if state.get("position") != self.placement:
             self.manual_position = None
+            self.native_dragged = False
             self.pending_dock_anchor = None
-        elif (self.manual_position and self.pill_rect and self.wanted_visible and state["visible"]
+        elif (getattr(self, "native_dragged", False) and self.manual_position and self.pill_rect
+              and not self.snapshot.get("transcript") and not state.get("transcript")
+              and self.wanted_visible and state["visible"]
               and self.snapshot.get("dock") != state.get("dock")):
             self.pending_dock_anchor = (
                 self.geometry.x + self.left + self.pill_rect["x"],
@@ -314,6 +331,12 @@ class Overlay:
         self.set_monitor(state.get("monitor"))
         viewport = state.get("viewport", {"width": 208, "height": 120})
         self.viewport = (viewport["width"], viewport["height"])
+        bounds = state.get("bounds")
+        if bounds:
+            self.manual_position = (
+                bounds["x"] - self.geometry.x,
+                self.geometry.y + self.geometry.height - bounds["y"] - self.viewport[1],
+            )
         self.webview.set_size_request(*self.viewport)
         self.window.resize(*self.viewport)
         self.place()
@@ -335,7 +358,7 @@ class Overlay:
             self.buffer += chunk
             while b"\n" in self.buffer:
                 line, self.buffer = self.buffer.split(b"\n", 1)
-                if len(line) > MAX_MESSAGE_BYTES:
+                if len(line) > MAX_STATE_BYTES:
                     raise ValueError("Oversized overlay message")
                 message = json.loads(line)
                 if message.get("type") == "state":
@@ -345,7 +368,7 @@ class Overlay:
                     if level is None or (isinstance(level, (int, float)) and math.isfinite(level)):
                         self.pending_audio = {"level": None if level is None else max(0, min(1, level))}
                         self.dispatch_javascript()
-            if len(self.buffer) > MAX_MESSAGE_BYTES:
+            if len(self.buffer) > MAX_STATE_BYTES:
                 raise ValueError("Oversized overlay message")
         except (ValueError, TypeError, KeyError, GLib.Error) as error:
             self.fail("Invalid overlay message: " + str(error))

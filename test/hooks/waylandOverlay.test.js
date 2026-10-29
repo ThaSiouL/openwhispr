@@ -30,9 +30,13 @@ test("the native pill follows the renderer theme, motion preference and absent m
   browser.matchMedia = () => motion;
   const states = [];
   const audio = [];
+  let receiveAction;
   browser.electronAPI = {
     getWaylandOverlayEnabled: async () => true,
-    onWaylandOverlayAction: () => () => {},
+    onWaylandOverlayAction: (callback) => {
+      receiveAction = callback;
+      return () => {};
+    },
     publishWaylandOverlayState: (value) => states.push(value),
     waylandOverlayAudioLevel: (value) => audio.push(value),
   };
@@ -50,12 +54,15 @@ test("the native pill follows the renderer theme, motion preference and absent m
       else delete globalThis[key];
     }
   });
+  let ownership;
+  const fullText = "Complete transcript ".repeat(1000);
   function Harness() {
-    useWaylandOverlay({
+    ownership = useWaylandOverlay({
       snapshot: { state: "recording", rich: false, collapseToLogo: true, waveformVisible: false },
       onAction: () => {},
       getAudioLevel: () => null,
       isRecording: true,
+      transcript: { text: fullText, measurementText: fullText },
     });
     return null;
   }
@@ -63,6 +70,10 @@ test("the native pill follows the renderer theme, motion preference and absent m
   assert.equal(states.at(-1).theme, "light");
   assert.equal(states.at(-1).collapseToLogo, true);
   assert.equal(states.at(-1).waveformVisible, false);
+  assert.equal(states.at(-1).transcript.text, fullText);
+  assert.deepEqual(ownership, { enabled: true, available: false });
+  await React.act(async () => receiveAction("available"));
+  assert.deepEqual(ownership, { enabled: true, available: true });
   assert.ok(audio.includes(null), "no microphone signal must clear the previous live level");
   await React.act(async () => {
     browser.document.documentElement.classList.add("dark");
@@ -74,6 +85,14 @@ test("the native pill follows the renderer theme, motion preference and absent m
     motionListeners.forEach((listener) => listener());
   });
   assert.equal(states.at(-1).reducedMotion, true);
+  await React.act(async () => receiveAction("unavailable"));
+  assert.deepEqual(ownership, { enabled: false, available: false });
+  const published = states.length;
+  await React.act(async () => {
+    motion.matches = false;
+    motionListeners.forEach((listener) => listener());
+  });
+  assert.equal(states.length, published, "fallback stops publishing transcript content");
   await React.act(async () => root.unmount());
   assert.equal(motionListeners.size, 0);
 });

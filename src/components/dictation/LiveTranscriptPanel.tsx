@@ -7,6 +7,14 @@ import { splitTranscriptForShimmer } from "../../utils/liveTranscriptPresentatio
 
 export type LiveTranscriptPhase = "listening" | "live" | "cleanup" | "final";
 
+export interface LiveTranscriptLabels {
+  label: string;
+  waitingForInput: string;
+  copy: string;
+  copied: string;
+  collapse: string;
+}
+
 interface LiveTranscriptPanelProps {
   text: string;
   measurementText: string;
@@ -16,11 +24,35 @@ interface LiveTranscriptPanelProps {
   contentVisible: boolean;
   onCollapse: () => void;
   onHoldChange?: (held: boolean) => void;
+  labels?: LiveTranscriptLabels;
+  onCopy?: () => void;
+  copied?: boolean;
 }
 
 const COPIED_RESET_MS = 1600;
 
-export function LiveTranscriptPanel({
+export function LiveTranscriptPanel(props: LiveTranscriptPanelProps) {
+  if (props.labels) return <LiveTranscriptContent {...props} labels={props.labels} />;
+  return <TranslatedLiveTranscriptPanel {...props} />;
+}
+
+function TranslatedLiveTranscriptPanel(props: LiveTranscriptPanelProps) {
+  const { t } = useTranslation();
+  return (
+    <LiveTranscriptContent
+      {...props}
+      labels={{
+        label: t("transcriptionPreview.label"),
+        waitingForInput: t("transcriptionPreview.waitingForInput"),
+        copy: t("transcriptionPreview.copy"),
+        copied: t("transcriptionPreview.copied"),
+        collapse: t("transcriptionPreview.collapse", { defaultValue: "Collapse transcript" }),
+      }}
+    />
+  );
+}
+
+function LiveTranscriptContent({
   text,
   measurementText,
   phase,
@@ -29,8 +61,10 @@ export function LiveTranscriptPanel({
   contentVisible,
   onCollapse,
   onHoldChange,
-}: LiveTranscriptPanelProps) {
-  const { t } = useTranslation();
+  labels,
+  onCopy,
+  copied: nativeCopied,
+}: LiveTranscriptPanelProps & { labels: LiveTranscriptLabels }) {
   const {
     scrollRef,
     handleScroll,
@@ -63,7 +97,7 @@ export function LiveTranscriptPanel({
             ? "translate-y-0 opacity-100 delay-75"
             : "pointer-events-none translate-y-2 opacity-0 delay-0"
         }`}
-        aria-label={t("transcriptionPreview.label")}
+        aria-label={labels.label}
         aria-busy={shouldShimmer}
         aria-hidden={!contentVisible}
         aria-live="polite"
@@ -81,7 +115,7 @@ export function LiveTranscriptPanel({
             </p>
           ) : (
             <p className="text-base leading-relaxed text-muted-foreground/55">
-              {t("transcriptionPreview.waitingForInput")}
+              {labels.waitingForInput}
             </p>
           )}
         </div>
@@ -102,13 +136,13 @@ export function LiveTranscriptPanel({
         >
           <button
             type="button"
-            onClick={() => void handleCopy()}
+            onClick={() => (onCopy ? onCopy() : void handleCopy())}
             disabled={!controlsVisible || !text.trim()}
             tabIndex={controlsVisible ? 0 : -1}
             className="inline-flex size-9 items-center justify-center rounded-full border border-border/35 bg-surface-1 text-muted-foreground shadow-[var(--shadow-card)] transition-colors hover:border-border/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
-            aria-label={copied ? t("transcriptionPreview.copied") : t("transcriptionPreview.copy")}
+            aria-label={(nativeCopied ?? copied) ? labels.copied : labels.copy}
           >
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+            {(nativeCopied ?? copied) ? <Check className="size-4" /> : <Copy className="size-4" />}
           </button>
           <button
             type="button"
@@ -116,7 +150,7 @@ export function LiveTranscriptPanel({
             disabled={!controlsVisible}
             tabIndex={controlsVisible ? 0 : -1}
             className="inline-flex size-9 items-center justify-center rounded-full border border-border/35 bg-surface-1 text-foreground shadow-[var(--shadow-card)] transition-colors hover:border-border/60 hover:bg-surface-2 disabled:pointer-events-none"
-            aria-label={t("transcriptionPreview.collapse", { defaultValue: "Collapse transcript" })}
+            aria-label={labels.collapse}
           >
             <ChevronDown className="size-4" />
           </button>
@@ -129,7 +163,7 @@ export function LiveTranscriptPanel({
         aria-hidden="true"
       >
         <p dir="auto" className="whitespace-pre-wrap break-words text-base leading-relaxed">
-          {measurementText || t("transcriptionPreview.waitingForInput")}
+          {measurementText || labels.waitingForInput}
         </p>
       </div>
     </>
