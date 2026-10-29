@@ -8,7 +8,16 @@ const path = require("node:path");
 
 const modulePath = require.resolve("../../src/helpers/hyprlandShortcut");
 const originalLoad = Module._load;
-const ENV_KEYS = ["HYPRLAND_CONFIG", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_CONFIG_HOME"];
+const ENV_KEYS = [
+  "HYPRLAND_CONFIG",
+  "HYPRLAND_INSTANCE_SIGNATURE",
+  "XDG_CONFIG_HOME",
+  "XDG_CURRENT_DESKTOP",
+  "XDG_SESSION_DESKTOP",
+  "DESKTOP_SESSION",
+  "XDG_SESSION_TYPE",
+  "WAYLAND_DISPLAY",
+];
 
 function loadManager(execFileSync) {
   delete require.cache[modulePath];
@@ -44,6 +53,8 @@ function withTempHyprConfig(fn) {
     for (const key of ENV_KEYS) delete process.env[key];
     process.env.XDG_CONFIG_HOME = path.join(root, "config");
     process.env.HYPRLAND_INSTANCE_SIGNATURE = "test";
+    process.env.XDG_CURRENT_DESKTOP = "Hyprland";
+    process.env.XDG_SESSION_TYPE = "wayland";
     try {
       await fn(path.join(process.env.XDG_CONFIG_HOME, "hypr"));
     } finally {

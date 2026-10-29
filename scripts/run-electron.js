@@ -76,6 +76,10 @@ const child = spawn(electronPath, [...chromiumFlags, appDir, ...appArgs], {
   cwd: appDir,
 });
 
+// The isolated test launcher terminates this wrapper, so relay termination to
+// Electron and keep the wrapper alive until Electron closes its inherited pipes.
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
+
 child.on("close", (code) => {
   process.exit(code || 0);
 });

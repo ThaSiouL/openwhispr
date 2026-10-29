@@ -1,6 +1,7 @@
 const { execFileSync } = require("child_process");
 const debugLogger = require("./debugLogger");
 const GnomeGlobalShortcutsPortal = require("./gnomeGlobalShortcutsPortal");
+const { getLinuxSessionInfo } = require("./linuxSession");
 
 const DBUS_SERVICE_NAME = "com.openwhispr.App";
 const DBUS_OBJECT_PATH = "/com/openwhispr/App";
@@ -197,7 +198,7 @@ class GnomeShortcutManager {
   }
 
   static isWayland() {
-    return process.env.XDG_SESSION_TYPE === "wayland";
+    return getLinuxSessionInfo().isWayland;
   }
 
   setMeetingCallback(callback) {

@@ -29,12 +29,14 @@ const MAX_RESTARTS_PER_SESSION = 3;
 // verifies the old process is really gone before spawning its replacement.
 const RESTART_EXIT_WAIT_MS = 2000;
 
-const STORAGE_DIR = path.join(
-  os.homedir(),
-  ".cache",
-  "openwhispr",
-  process.env.NODE_ENV === "development" ? "qdrant-data-dev" : "qdrant-data"
-);
+const STORAGE_DIR =
+  process.env.OPENWHISPR_QDRANT_STORAGE_DIR ||
+  path.join(
+    os.homedir(),
+    ".cache",
+    "openwhispr",
+    process.env.NODE_ENV === "development" ? "qdrant-data-dev" : "qdrant-data"
+  );
 
 // Emits "restarted" (port) after a successful unhealthy-restart so the
 // composition root can re-wire clients (the replacement may be on a new port).

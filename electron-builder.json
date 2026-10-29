@@ -101,6 +101,10 @@
   "extraResources": [
     ".env",
     {
+      "from": "resources/linux/wayland-overlay.py",
+      "to": "linux/wayland-overlay.py"
+    },
+    {
       "from": "src/assets",
       "to": "src/assets",
       "filter": ["**/*", "!fonts/yowza/**"]

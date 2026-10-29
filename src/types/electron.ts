@@ -1552,6 +1552,21 @@ declare global {
         inputKind?: "dictation" | "assistant" | "translation"
       ) => void;
       dictationAudioLevelChanged?: (level: number) => void;
+      getWaylandOverlayEnabled: () => Promise<boolean>;
+      publishWaylandOverlayState: (state: {
+        state: "idle" | "hover" | "recording" | "processing" | "thinking" | "unavailable";
+        rich: boolean;
+        suppressed: boolean;
+        expanded: boolean;
+        agentMode: boolean;
+        interactive: boolean;
+        cancelVisible: boolean;
+        labels: { tooltip: string; cancel: string };
+      }) => void;
+      waylandOverlayAudioLevel: (level: number) => void;
+      onWaylandOverlayAction: (
+        callback: (action: "activate" | "cancel" | "menu" | "hover", hovered?: boolean) => void
+      ) => () => void;
       toggleAgentPanelDictation?: () => Promise<{ success: boolean }>;
       cancelAgentPanelDictation?: () => Promise<{ success: boolean }>;
       getAgentDictationPillState?: () => Promise<{

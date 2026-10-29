@@ -1,6 +1,7 @@
 // Chromium picks the display backend before JS runs, so appendSwitch is too
 // late — the flag has to come from a relaunch.
 const { XWAYLAND_FLAG, shouldForceXWayland } = require("./src/helpers/xwayland");
+const { getLinuxSessionInfo } = require("./src/helpers/linuxSession");
 const { createHotkeyRepeatGate } = require("./src/helpers/hotkeyRepeatGate");
 const { shouldDisableGpuCompositing } = require("./src/helpers/linuxGpuCompositing");
 
@@ -125,7 +126,7 @@ if (gpuCompositingDisabledForNvidia) {
 // Wayland: packaged builds use the wrapper script (scripts/afterPack.js) to
 // force --ozone-platform=x11 before Electron starts. appendSwitch below is a
 // best-effort fallback for unpackaged dev mode (may not take effect on E39+).
-if (process.platform === "linux" && process.env.XDG_SESSION_TYPE === "wayland") {
+if (process.platform === "linux" && getLinuxSessionInfo().isWayland) {
   app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations");
 }
 

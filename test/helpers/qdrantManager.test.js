@@ -35,6 +35,7 @@ function loadManager({ gracefulStop } = {}) {
   const state = {
     healthy: true,
     spawnCalls: [],
+    configWrites: [],
     pidFileOps: [],
     warns: [],
     errors: [],
@@ -83,7 +84,10 @@ function loadManager({ gracefulStop } = {}) {
       };
     }
     if (request === "fs") {
-      return { mkdirSync() {}, writeFileSync() {} };
+      return {
+        mkdirSync() {},
+        writeFileSync: (filename, content) => state.configWrites.push({ filename, content }),
+      };
     }
     if (request === "../utils/serverUtils") {
       return {
@@ -154,6 +158,29 @@ test("start spawns qdrant, writes the pid entry, and stop clears it", async () =
   assert.equal(manager.isReady(), false);
   assert.equal(manager.getStatus().running, false);
   assert.deepEqual(state.pidFileOps[state.pidFileOps.length - 1], ["clear", "qdrant"]);
+});
+
+test("an isolated storage override keeps Qdrant config and vectors out of the installed profile", async () => {
+  const path = require("node:path");
+  const os = require("node:os");
+  const directory = path.join(os.tmpdir(), "openwhispr-isolated-qdrant");
+  const original = process.env.OPENWHISPR_QDRANT_STORAGE_DIR;
+  let fixture;
+  try {
+    process.env.OPENWHISPR_QDRANT_STORAGE_DIR = directory;
+    fixture = loadManager();
+  } finally {
+    if (original === undefined) delete process.env.OPENWHISPR_QDRANT_STORAGE_DIR;
+    else process.env.OPENWHISPR_QDRANT_STORAGE_DIR = original;
+  }
+  const { manager, state } = fixture;
+  try {
+    await manager.start();
+    assert.equal(state.configWrites[0].filename, path.join(directory, "config.yaml"));
+    assert.ok(state.configWrites[0].content.includes(path.join(directory, "storage")));
+  } finally {
+    await manager.stop();
+  }
 });
 
 test("restarts the sidecar after sustained health-check failures", async (t) => {

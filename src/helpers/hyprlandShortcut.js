@@ -4,6 +4,7 @@ const path = require("path");
 const os = require("os");
 const { randomUUID } = require("crypto");
 const debugLogger = require("./debugLogger");
+const { getLinuxSessionInfo } = require("./linuxSession");
 
 const DBUS_SERVICE_NAME = "com.openwhispr.App";
 const DBUS_OBJECT_PATH = "/com/openwhispr/App";
@@ -301,19 +302,14 @@ class HyprlandShortcutManager {
 
   /**
    * Detect if the current session is running on Hyprland.
-   * Checks the HYPRLAND_INSTANCE_SIGNATURE env var (most reliable)
-   * and falls back to XDG_CURRENT_DESKTOP.
+   * Trusts desktop metadata before a potentially stale compositor socket.
    */
   static isHyprland() {
-    if (process.env.HYPRLAND_INSTANCE_SIGNATURE) {
-      return true;
-    }
-    const desktop = (process.env.XDG_CURRENT_DESKTOP || "").toLowerCase();
-    return desktop.includes("hyprland");
+    return getLinuxSessionInfo().isHyprland;
   }
 
   static isWayland() {
-    return process.env.XDG_SESSION_TYPE === "wayland";
+    return getLinuxSessionInfo().isWayland;
   }
 
   /**

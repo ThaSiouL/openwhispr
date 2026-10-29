@@ -6,6 +6,7 @@ import { useHotkey } from "./hooks/useHotkey";
 import { formatHotkeyListLabel } from "./utils/hotkeys";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useLinuxPillInteractivity } from "./hooks/useLinuxPillInteractivity";
+import { useWaylandOverlay } from "./hooks/useWaylandOverlay";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useAssistantFollowUpThinking, useAssistantPanel } from "./hooks/useAssistantPanel";
 import { useOnboardingAssistantDemo } from "./hooks/useOnboardingAssistantDemo";
@@ -632,6 +633,40 @@ export default function App() {
     assistantClosing: assistant.closing,
     panelReturnResizeActive,
     hasLiveActivity: pillHasLiveActivity,
+  });
+
+  useWaylandOverlay({
+    snapshot: {
+      state: commonPillState,
+      rich:
+        anyPanelMounted ||
+        isCommandMenuOpen ||
+        toastCount > 0 ||
+        dictationErrorPillHandoffActive ||
+        panelReturnResizeActive,
+      suppressed: pillVisuallySuppressed,
+      expanded: isCompactPill,
+      agentMode: agentModeActive,
+      interactive: pillIsInteractive,
+      cancelVisible: voicePillInteraction.cancelVisible,
+      labels: {
+        tooltip: canReopenLiveTranscript ? t("transcriptionPreview.label") : micTooltip,
+        cancel: isRecording ? t("app.buttons.cancelRecording") : t("app.buttons.cancelProcessing"),
+      },
+    },
+    onAction: (action, hovered) => {
+      if (action === "hover") setIsHovered(hovered);
+      else if (action === "activate") activateVoicePill();
+      else if (action === "cancel") {
+        if (isRecording) cancelRecording();
+        else if (isProcessing) cancelProcessing();
+      } else if (action === "menu" && !anyPanelMounted) {
+        setIsHovered(false);
+        setIsCommandMenuOpen(true);
+      }
+    },
+    getAudioLevel,
+    isRecording,
   });
 
   useLinuxPillInteractivity({

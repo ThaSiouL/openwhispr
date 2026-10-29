@@ -482,6 +482,7 @@ test("the first live transcript update still surfaces a hidden dictation window"
   manager.mainWindow = {
     isDestroyed: () => false,
     isVisible: () => false,
+    isMinimized: () => false,
     showInactive: () => calls.push("showInactive"),
     webContents: { send: () => undefined },
   };

@@ -1,4 +1,5 @@
 const debugLogger = require("./debugLogger");
+const { getLinuxSessionInfo } = require("./linuxSession");
 
 let dbus = null;
 
@@ -127,7 +128,7 @@ class KDEShortcutManager {
   }
 
   static isWayland() {
-    return process.env.XDG_SESSION_TYPE === "wayland";
+    return getLinuxSessionInfo().isWayland;
   }
 
   static convertToQtKeyCode(electronHotkey) {

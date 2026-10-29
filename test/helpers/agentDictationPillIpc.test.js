@@ -290,3 +290,26 @@ test("the final-transcript relay is accepted only from the dictation renderer", 
   finalTranscriptHandler({ sender: mainContents }, "hello world");
   assert.deepEqual(shown, ["hello world"]);
 });
+
+test("only the main renderer can configure or meter the optional native overlay", async () => {
+  const { stub, mainContents, pillContents } = makeWindowManagerStub();
+  const states = [];
+  const levels = [];
+  stub.getWaylandOverlayEnabled = () => true;
+  stub.publishWaylandOverlayState = (state) => states.push(state);
+  stub.setWaylandOverlayAudioLevel = (level) => levels.push(level);
+  installWindowManager(stub);
+  const state = { state: "recording" };
+  for (const sender of [{}, pillContents]) {
+    assert.equal(await handlers.get("get-wayland-overlay-enabled")({ sender }), false);
+    onHandlers.get("wayland-overlay-state")({ sender }, state);
+    onHandlers.get("wayland-overlay-audio-level")({ sender }, 0.5);
+  }
+  assert.deepEqual(states, []);
+  assert.deepEqual(levels, []);
+  assert.equal(await handlers.get("get-wayland-overlay-enabled")({ sender: mainContents }), true);
+  onHandlers.get("wayland-overlay-state")({ sender: mainContents }, state);
+  onHandlers.get("wayland-overlay-audio-level")({ sender: mainContents }, 0.5);
+  assert.deepEqual(states, [state]);
+  assert.deepEqual(levels, [0.5]);
+});

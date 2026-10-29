@@ -86,6 +86,31 @@ test("detects COSMIC without treating it as wlroots", () => {
   assert.equal(session.isWlroots, false);
 });
 
+test("named desktops override stale compositor sockets for shortcut and paste routing", () => {
+  for (const desktop of ["GNOME", "KDE", "COSMIC", "niri", "X-Cinnamon"]) {
+    const session = getLinuxSessionInfo({
+      XDG_SESSION_TYPE: "wayland",
+      XDG_CURRENT_DESKTOP: desktop,
+      SWAYSOCK: "/run/user/1000/stale-sway.sock",
+      HYPRLAND_INSTANCE_SIGNATURE: "stale",
+    });
+    assert.equal(session.isHyprland, false, desktop);
+    assert.equal(session.isWlroots, false, desktop);
+    assert.equal(session.isSway, false, desktop);
+  }
+});
+
+test("detects Hyprland from desktop metadata or an unnamed session's socket", () => {
+  for (const environment of [
+    { XDG_CURRENT_DESKTOP: "Hyprland" },
+    { HYPRLAND_INSTANCE_SIGNATURE: "live" },
+  ]) {
+    const session = getLinuxSessionInfo({ XDG_SESSION_TYPE: "wayland", ...environment });
+    assert.equal(session.isHyprland, true);
+    assert.equal(session.isWlroots, true);
+  }
+});
+
 // wlroots, Hyprland and niri's xwayland-satellite keep an X11 clipboard write from a
 // focused Wayland app (#2621); KWin, Mutter and COSMIC hand it over themselves.
 test("requires wl-copy only where XWayland's clipboard needs X11 focus", () => {
@@ -111,6 +136,7 @@ test("requires wl-copy only where XWayland's clipboard needs X11 focus", () => {
       false,
     ],
     ["a bare sway socket", { SWAYSOCK: "/run/user/1000/sway-ipc.sock" }, true],
+    ["a bare Hyprland signature", { HYPRLAND_INSTANCE_SIGNATURE: "live" }, true],
     [
       "X11",
       { XDG_SESSION_TYPE: "x11", WAYLAND_DISPLAY: undefined, XDG_CURRENT_DESKTOP: "i3" },

@@ -7,6 +7,12 @@ const {
   meetingDestinationContext,
 } = require("./meetingNotificationDestination");
 const { createLinuxWindowInputRegion } = require("./linuxWindowInputRegion");
+const {
+  WaylandOverlay,
+  isWaylandOverlayEnabled,
+  normalizeOverlaySnapshot,
+  overlayScriptPath,
+} = require("./waylandOverlay");
 // Aliased: this class has an openExternalUrl method wrapping the helper.
 const { openExternalUrl: openUrlInExternalBrowser } = require("./externalUrlOpener");
 const HotkeyManager = require("./hotkeyManager");
@@ -128,10 +134,15 @@ class WindowManager {
     this._pendingMeetingNoteNavigation = null;
     this._pendingNoteNavigation = null;
     this._pendingSettingsSection = null;
+    this._dictationPanelRequestedVisible = false;
+    this._waylandOverlaySnapshot = null;
+    this._waylandOverlayFailed = false;
+    this._waylandOverlayVisible = false;
 
     app.on("before-quit", () => {
       this.isQuitting = true;
       this.hotkeyManager.unregisterAll();
+      this.stopWaylandOverlay();
     });
   }
 
@@ -191,11 +202,116 @@ class WindowManager {
       this.enforceMainWindowOnTop();
       this._notifyMainWindowHorizontalDirection();
     });
+    this.mainWindow.webContents.on("did-start-loading", () => this.stopWaylandOverlay());
+    this.mainWindow.webContents.on("render-process-gone", () => this.stopWaylandOverlay());
 
     await this.loadMainWindow();
     await this.initializeHotkey();
     this.dragManager.setTargetWindow(this.mainWindow);
     MenuManager.setupMainMenu(() => this.openSettings());
+  }
+
+  getWaylandOverlayEnabled() {
+    return isWaylandOverlayEnabled() && !this._waylandOverlayFailed;
+  }
+
+  publishWaylandOverlayState(value) {
+    const snapshot = normalizeOverlaySnapshot(value);
+    if (!snapshot || !this.getWaylandOverlayEnabled()) return;
+    this._waylandOverlaySnapshot = snapshot;
+    if (!this._waylandOverlay) {
+      const overlay = new WaylandOverlay({
+        scriptPath: overlayScriptPath(app),
+        onReady: () => this._syncWaylandOverlay(),
+        onVisibility: (visible) => {
+          this._waylandOverlayVisible = visible;
+          this._applyWaylandOverlayHostVisibility();
+        },
+        onAction: (action, hovered) => {
+          if (this._onboardingActive || !this._waylandOverlayVisible) return;
+          const win = this.mainWindow;
+          if (win && !win.isDestroyed()) {
+            win.webContents.send("wayland-overlay-action", action, hovered);
+          }
+        },
+        onPosition: ({ x, y, width, height }) => {
+          const win = this.mainWindow;
+          if (!win || win.isDestroyed() || !this._usesWaylandOverlay()) return;
+          const bounds = win.getBounds();
+          const left = this.getMainWindowHorizontalDirection() === "left";
+          this._moveMainWindowTo({
+            ...bounds,
+            x: Math.round(left ? x - 12 : x + width + 12 - bounds.width),
+            y: Math.round(y + height + 12 - bounds.height),
+          });
+          this._mainWindowPlacementCoordinator.markManuallyPositioned();
+        },
+        onFailure: (reason) => {
+          this._waylandOverlayFailed = true;
+          this._waylandOverlayVisible = false;
+          debugLogger.warn("GTK overlay unavailable; using Electron", { reason }, "window");
+          this._applyWaylandOverlayHostVisibility();
+        },
+      });
+      this._waylandOverlay = overlay;
+      overlay.start();
+    }
+    this._syncWaylandOverlay();
+  }
+
+  setWaylandOverlayAudioLevel(level) {
+    if (typeof level === "number") this._waylandOverlay?.audio(level);
+  }
+
+  _usesWaylandOverlay() {
+    return Boolean(
+      this._waylandOverlay?.ready &&
+      !this._onboardingActive &&
+      this._waylandOverlaySnapshot &&
+      !this._waylandOverlaySnapshot.rich &&
+      !this._assistantPanelOpen
+    );
+  }
+
+  _syncWaylandOverlay() {
+    const overlay = this._waylandOverlay;
+    if (!overlay?.ready) return;
+    const snapshot = this._waylandOverlaySnapshot;
+    const native = this._usesWaylandOverlay();
+    const bounds = this.mainWindow?.getBounds();
+    const display = bounds ? this._getMainWindowDisplayFor(bounds) : null;
+    overlay.update({
+      ...snapshot,
+      visible: Boolean(native && this._dictationPanelRequestedVisible && !snapshot.suppressed),
+      position: this._panelStartPosition,
+      monitor: display?.bounds || null,
+    });
+    this._applyWaylandOverlayHostVisibility();
+  }
+
+  _applyWaylandOverlayHostVisibility() {
+    const win = this.mainWindow;
+    if (!win || win.isDestroyed() || this.isQuitting) return;
+    if (!this._dictationPanelRequestedVisible || this._onboardingActive) return;
+    if (this._usesWaylandOverlay()) {
+      // Keep Electron until GTK acknowledges its mapped window. Suppressed
+      // presentation intentionally has neither floating control visible.
+      if (this._waylandOverlayVisible || this._waylandOverlaySnapshot.suppressed) win.hide();
+    } else if (!this._waylandOverlayVisible && !win.isVisible()) {
+      win.showInactive();
+      if (this._assistantPanelOpen) {
+        win.focus();
+        this._focusLinuxMainWindow();
+      }
+    }
+  }
+
+  stopWaylandOverlay() {
+    this._waylandOverlay?.stop();
+    this._waylandOverlay = null;
+    this._waylandOverlayVisible = false;
+    this._waylandOverlaySnapshot = null;
+    this._applyWaylandOverlayHostVisibility();
   }
 
   registerAssistantSelectionContextMenu() {
@@ -223,6 +339,8 @@ class WindowManager {
   // How it then becomes key is platform-split — see the branches below.
   setAssistantPanelOpen(open) {
     this._assistantPanelOpen = Boolean(open);
+    if (this._assistantPanelOpen) this._dictationPanelRequestedVisible = true;
+    this._syncWaylandOverlay();
     if (!this._assistantPanelOpen) {
       this._assistantPanelBusy = false;
       this.assistantPasteTarget?.clear();
@@ -231,7 +349,9 @@ class WindowManager {
       if (this._assistantPanelOpen) {
         // The window may have been hidden while the command was in flight
         // (PTT tap, auto-hide, tray); focus() is a no-op on a hidden window.
-        if (!this.mainWindow.isVisible()) this.mainWindow.showInactive();
+        if (!this.mainWindow.isVisible() && !this._waylandOverlayVisible) {
+          this.mainWindow.showInactive();
+        }
         this.mainWindow.setFocusable(true);
         // macOS: never request app activation for the overlay. focus() calls
         // NSApp activate, and when another OpenWhispr window (control panel)
@@ -1381,6 +1501,7 @@ class WindowManager {
       "main-window-horizontal-direction-changed",
       this.getMainWindowHorizontalDirection()
     );
+    this._syncWaylandOverlay();
   }
 
   setPanelStartPosition(position) {
@@ -1400,6 +1521,7 @@ class WindowManager {
       this.mainWindow.setBounds(newPos);
       this._notifyMainWindowHorizontalDirection();
     }
+    this._syncWaylandOverlay();
   }
 
   setHotkeyListeningMode(enabled) {
@@ -1643,7 +1765,7 @@ class WindowManager {
     // Partials arrive several times a second; re-showing a visible window
     // restacks it (and re-fires "show") on every chunk (#1262).
     if (!this.mainWindow.isVisible()) {
-      this.mainWindow.showInactive();
+      this.showDictationPanel();
       this.enforceMainWindowOnTop();
     }
   }
@@ -1812,6 +1934,16 @@ class WindowManager {
     if (this._onboardingActive) return;
     const { focus = false, reposition = false, targetPidPromise } = options;
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
+    this._dictationPanelRequestedVisible = true;
+    if (this._waylandOverlay?.ready) {
+      if (reposition && !this._assistantPanelOpen) {
+        void this._repositionToActiveDisplay(targetPidPromise).then(() =>
+          this._syncWaylandOverlay()
+        );
+      }
+      this._syncWaylandOverlay();
+      if (this._usesWaylandOverlay() || this._waylandOverlayVisible) return;
+    }
     if (this._assistantPanelOpen) {
       // The open panel owns geometry (no reposition), but it must never be
       // left invisible: surface the window if something hid it.
@@ -1847,6 +1979,7 @@ class WindowManager {
 
     if (nextActive) {
       this._onboardingActive = true;
+      this._syncWaylandOverlay();
       this.sendCancelDictation();
       this._hideNormalAppSurfaces();
       return true;
@@ -2068,6 +2201,8 @@ class WindowManager {
     // its window (a PTT tap during thinking used to hide it — the panel then
     // opened invisibly and nothing could show it again).
     if (this._assistantPanelOpen || this._assistantPanelBusy) return;
+    this._dictationPanelRequestedVisible = false;
+    this._syncWaylandOverlay();
     this._mainWindowPlacementCoordinator.cancelPending();
     if (this.mainWindow && !this.mainWindow.isDestroyed()) this.mainWindow.hide();
   }
@@ -2240,6 +2375,7 @@ class WindowManager {
   }
 
   isDictationPanelVisible() {
+    if (this._waylandOverlayVisible) return true;
     if (!this.mainWindow || this.mainWindow.isDestroyed()) {
       return false;
     }
@@ -2318,6 +2454,7 @@ class WindowManager {
     this.mainWindow.on("move", () => this.positionAgentDictationPill());
 
     this.mainWindow.on("closed", () => {
+      this.stopWaylandOverlay();
       this.dragManager.cleanup();
       const pillWindow = this.agentDictationPillWindow;
       if (pillWindow && !pillWindow.isDestroyed()) pillWindow.close();

@@ -129,6 +129,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   dictationLifecycleStateChanged: (state, inputKind) =>
     ipcRenderer.send("dictation-lifecycle-state-changed", state, inputKind),
   dictationAudioLevelChanged: (level) => ipcRenderer.send("dictation-audio-level-changed", level),
+  getWaylandOverlayEnabled: () => ipcRenderer.invoke("get-wayland-overlay-enabled"),
+  publishWaylandOverlayState: (state) => ipcRenderer.send("wayland-overlay-state", state),
+  waylandOverlayAudioLevel: (level) => ipcRenderer.send("wayland-overlay-audio-level", level),
+  onWaylandOverlayAction: registerListener(
+    "wayland-overlay-action",
+    (callback) => (_event, action, hovered) => callback(action, hovered)
+  ),
   toggleAgentPanelDictation: () => ipcRenderer.invoke("toggle-agent-panel-dictation"),
   cancelAgentPanelDictation: () => ipcRenderer.invoke("cancel-agent-panel-dictation"),
   getAgentDictationPillState: () => ipcRenderer.invoke("get-agent-dictation-pill-state"),

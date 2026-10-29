@@ -2152,6 +2152,23 @@ class IPCHandlers {
     // in the dictation renderer. Only confirmed renderer state may change the
     // main-process recording gate; raw key presses are merely requests and can
     // be declined while a transcript is still being finalized.
+    ipcMain.handle("get-wayland-overlay-enabled", (event) => {
+      return (
+        event.sender === this.windowManager.mainWindow?.webContents &&
+        this.windowManager.getWaylandOverlayEnabled()
+      );
+    });
+    ipcMain.on("wayland-overlay-state", (event, state) => {
+      if (event.sender === this.windowManager.mainWindow?.webContents) {
+        this.windowManager.publishWaylandOverlayState(state);
+      }
+    });
+    ipcMain.on("wayland-overlay-audio-level", (event, level) => {
+      if (event.sender === this.windowManager.mainWindow?.webContents) {
+        this.windowManager.setWaylandOverlayAudioLevel(level);
+      }
+    });
+
     ipcMain.on("dictation-lifecycle-state-changed", (event, state, inputKind) => {
       const dictationWindow = this.windowManager.mainWindow;
       if (

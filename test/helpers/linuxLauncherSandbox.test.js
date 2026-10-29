@@ -41,6 +41,7 @@ function runLauncher(ctx, { unshareExit = 0, env = {}, args = [] } = {}) {
       ...process.env,
       PATH: `${ctx.stubBin}:${process.env.PATH}`,
       XDG_SESSION_TYPE: "x11",
+      WAYLAND_DISPLAY: "",
       XDG_CONFIG_HOME: path.join(ctx.tmp, "xdg"),
       STUB_UNSHARE_EXIT: String(unshareExit),
       ...env,
@@ -138,3 +139,35 @@ test("rejects executable names that could break out of the generated script", ()
   assert.throws(() => buildLinuxWrapperScript(""), /Invalid Linux executable name/);
   assert.throws(() => buildLinuxWrapperScript(undefined), /Invalid Linux executable name/);
 });
+
+test("defaults TTY-launched Wayland sessions to XWayland", { skip: !isLinux }, () => {
+  const ctx = setupLauncher();
+  const res = runLauncher(ctx, {
+    env: { XDG_SESSION_TYPE: "tty", WAYLAND_DISPLAY: "wayland-1" },
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(launchedArgs(ctx), ["--ozone-platform=x11"]);
+});
+
+test(
+  "preserves explicit backend choices from arguments or the flags file",
+  { skip: !isLinux },
+  () => {
+    for (const flags of [["--ozone-platform=wayland"], ["--ozone-platform", "wayland"]]) {
+      for (const fromConfig of [false, true]) {
+        const ctx = setupLauncher();
+        if (fromConfig) {
+          const xdgDir = path.join(ctx.tmp, "xdg");
+          fs.mkdirSync(xdgDir);
+          fs.writeFileSync(path.join(xdgDir, `${BINARY_NAME}-flags.conf`), flags.join("\n"));
+        }
+        const res = runLauncher(ctx, {
+          env: { XDG_SESSION_TYPE: "wayland" },
+          args: fromConfig ? [] : flags,
+        });
+        assert.equal(res.status, 0, res.stderr);
+        assert.deepEqual(launchedArgs(ctx), flags);
+      }
+    }
+  }
+);
