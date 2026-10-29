@@ -114,11 +114,17 @@ test("Electron stays visible until GTK maps, and rich UI waits until GTK unmaps"
   h.helper.callbacks.onVisibility(true);
   assert.equal(h.win.isVisible(), false);
   assert.equal(h.manager.isDictationPanelVisible(), true);
+  const nativeBounds = h.helper.updates.at(-1).bounds;
+  const richBounds = { x: 72, y: 38, width: 466, height: 340 };
+  h.win.getBounds = () => richBounds;
   h.manager.publishWaylandOverlayState({ ...snapshot, rich: true });
+  assert.deepEqual(h.helper.updates.at(-1).bounds, richBounds);
   assert.equal(h.helper.updates.at(-1).visible, false);
   assert.equal(h.win.isVisible(), false);
   h.helper.callbacks.onVisibility(false);
   assert.equal(h.win.isVisible(), true);
+  h.manager.publishWaylandOverlayState(snapshot);
+  assert.deepEqual(h.helper.updates.at(-1).bounds, nativeBounds);
 });
 
 test("fallback restores the recording renderer without retry loops", () => {
@@ -127,6 +133,9 @@ test("fallback restores the recording renderer without retry loops", () => {
   h.helper.callbacks.onVisibility(true);
   h.helper.ready = false;
   h.helper.callbacks.onFailure("dependency missing");
+  const fallbackBounds = { x: 72, y: 38, width: 466, height: 340 };
+  h.win.getBounds = () => fallbackBounds;
+  assert.deepEqual(h.manager._getMainWindowBounds(), fallbackBounds);
   assert.equal(h.win.isVisible(), true);
   assert.equal(h.manager.getWaylandOverlayEnabled(), false);
   assert.deepEqual(h.sent.at(-1), ["wayland-overlay-action", "unavailable"]);
@@ -143,6 +152,52 @@ test("GTK mirrors the expanded transcript viewport and its screen position", () 
   assert.deepEqual(state.viewport, { width: 466, height: 562 });
   assert.deepEqual(state.bounds, { x: 150, y: 480, width: 466, height: 562 });
   assert.deepEqual(h.sent.at(-1), ["wayland-overlay-action", "available"]);
+});
+
+test("hidden Electron movement cannot pull the native preview along with Settings", () => {
+  const h = harness();
+  h.helper.becomeReady();
+  h.helper.callbacks.onVisibility(true);
+  const anchored = h.helper.updates.at(-1).bounds;
+  h.win.getBounds = () => ({ x: 72, y: 38, width: 1200, height: 800 });
+  h.manager.publishWaylandOverlayState({ ...snapshot, cancelVisible: true });
+  assert.deepEqual(h.helper.updates.at(-1).bounds, anchored);
+});
+
+test("an unmoved Electron click before GTK maps preserves the native anchor", async () => {
+  const h = harness();
+  const anchor = h.manager._getMainWindowBounds();
+  h.win.getBounds = () => ({ x: 72, y: 38, width: 208, height: 120 });
+  h.manager._waylandOverlayManualDirection = "right";
+  h.manager.dragManager.startWindowDrag = async () => ({ success: true });
+  h.manager.dragManager.stopWindowDrag = async () => ({ success: true });
+  h.manager.getMainWindowHorizontalDirection = () => "right";
+  await h.manager.startWindowDrag();
+  await h.manager.stopWindowDrag();
+  h.helper.becomeReady();
+  assert.deepEqual(h.helper.updates.at(-1).bounds, anchor);
+});
+
+test("native placement and transcript growth use requested bounds while XWayland reports stale bounds", async () => {
+  const h = harness();
+  h.helper.becomeReady();
+  h.helper.callbacks.onVisibility(true);
+  h.manager._waylandOverlayManualDirection = "right";
+  const requested = [];
+  h.win.setBounds = (bounds) => requested.push(bounds);
+  h.win.getBounds = () => ({ x: 72, y: 38, width: 1200, height: 800 });
+  const initial = { x: 600, y: 900, width: 208, height: 120 };
+  h.manager._moveMainWindowTo(initial);
+  assert.deepEqual(h.helper.updates.at(-1).bounds, initial);
+  h.manager._prepareRendererForMainWindowResize = async () => {};
+  h.manager._resolveMainWindowSize = (key, _, request) =>
+    key === "BASE" ? { width: 208, height: 120 } : { width: 466, height: request.surfaceHeight };
+  await h.manager._performMainWindowResize("ASSISTANT_CONTENT", { surfaceHeight: 176 });
+  await h.manager._performMainWindowResize("ASSISTANT_CONTENT", { surfaceHeight: 340 });
+  assert.deepEqual(h.helper.updates.at(-1).bounds, { x: 342, y: 680, width: 466, height: 340 });
+  await h.manager._performMainWindowResize("BASE");
+  assert.deepEqual(requested.at(-1), initial);
+  assert.deepEqual(h.helper.updates.at(-1).bounds, initial);
 });
 
 test("a transcript content resize waits for GTK layout before revealing text", async () => {

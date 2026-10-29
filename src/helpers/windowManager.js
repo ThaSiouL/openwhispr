@@ -140,6 +140,7 @@ class WindowManager {
     this._waylandOverlayFailed = false;
     this._waylandOverlayVisible = false;
     this._waylandOverlayManualDirection = null;
+    this._waylandOverlayBounds = null;
 
     app.on("before-quit", () => {
       this.isQuitting = true;
@@ -160,6 +161,7 @@ class WindowManager {
       null,
       this._panelStartPosition
     );
+    this._waylandOverlayBounds = { ...position };
 
     this.mainWindow = new BrowserWindow({
       ...MAIN_WINDOW_CONFIG,
@@ -280,12 +282,32 @@ class WindowManager {
     );
   }
 
+  _getMainWindowBounds() {
+    if (
+      this.getWaylandOverlayEnabled() &&
+      !this._onboardingActive &&
+      !this._assistantPanelOpen &&
+      !this._waylandOverlaySnapshot?.rich
+    ) {
+      // Hidden XWayland geometry can follow another app window. Native layout
+      // follows our placement requests instead, including before GTK is ready.
+      this._waylandOverlayBounds ??= { ...this.mainWindow.getBounds() };
+      return { ...this._waylandOverlayBounds };
+    }
+    return this.mainWindow.getBounds();
+  }
+
+  _setMainWindowBounds(bounds) {
+    this._waylandOverlayBounds = { ...bounds };
+    this.mainWindow.setBounds(bounds);
+  }
+
   _syncWaylandOverlay() {
     const overlay = this._waylandOverlay;
     if (!overlay?.ready) return;
     const snapshot = this._waylandOverlaySnapshot;
     const native = this._usesWaylandOverlay();
-    const bounds = this.mainWindow?.getBounds();
+    const bounds = this.mainWindow ? this._getMainWindowBounds() : null;
     const display = bounds ? this._getMainWindowDisplayFor(bounds) : null;
     overlay.update({
       ...snapshot,
@@ -750,7 +772,7 @@ class WindowManager {
     // Bounds, display and the work-area fit are all sampled inside the queue:
     // a queued cross-display move would otherwise leave a fit computed at
     // enqueue time describing the display the window is about to leave.
-    const currentBounds = this.mainWindow.getBounds();
+    const currentBounds = this._getMainWindowBounds();
     const display = this._getMainWindowDisplayFor(currentBounds);
     const newSize = this._resolveMainWindowSize(
       sizeKey,
@@ -808,7 +830,7 @@ class WindowManager {
         return { success: false, message: "Window not available" };
       }
       this._lastResizeBounds = restored;
-      this.mainWindow.setBounds(restored);
+      this._setMainWindowBounds(restored);
       this._activeHorizontalDirection = null;
       this._notifyMainWindowHorizontalDirection();
       await this._waitForWaylandOverlayLayout();
@@ -882,7 +904,7 @@ class WindowManager {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) {
       return { success: false, message: "Window not available" };
     }
-    this.mainWindow.setBounds(newBounds);
+    this._setMainWindowBounds(newBounds);
     this._lastResizeBounds = newBounds;
     if (sizeKey === "BASE") {
       this._activeHorizontalDirection = null;
@@ -1511,7 +1533,7 @@ class WindowManager {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) {
       return this._panelStartPosition === "bottom-left" ? "left" : "right";
     }
-    const bounds = this.mainWindow.getBounds();
+    const bounds = this._getMainWindowBounds();
     const display = this._getMainWindowDisplayFor(bounds);
     return resolveHorizontalWindowDirection(bounds, display, this._panelStartPosition);
   }
@@ -1532,7 +1554,7 @@ class WindowManager {
     this._activeHorizontalDirection = null;
     // Reposition the window immediately
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      const currentBounds = this.mainWindow.getBounds();
+      const currentBounds = this._getMainWindowBounds();
       const display = this._getMainWindowDisplayFor(currentBounds);
       const newPos = WindowPositionUtil.getMainWindowPosition(
         display,
@@ -1540,7 +1562,7 @@ class WindowManager {
         this._panelStartPosition
       );
       this._clearRendererResizeMask();
-      this.mainWindow.setBounds(newPos);
+      this._setMainWindowBounds(newPos);
       this._notifyMainWindowHorizontalDirection();
     }
     this._syncWaylandOverlay();
@@ -1614,6 +1636,7 @@ class WindowManager {
         Math.abs(draggedBounds.x - start.x) > DRAG_MOVE_TOLERANCE_PX ||
         Math.abs(draggedBounds.y - start.y) > DRAG_MOVE_TOLERANCE_PX;
       if (moved) {
+        this._waylandOverlayBounds = { ...draggedBounds };
         this._waylandOverlayManualDirection = null;
         this._mainWindowPlacementCoordinator.markManuallyPositioned();
         this._baseBoundsBeforeResize = null;
@@ -1879,7 +1902,7 @@ class WindowManager {
       return { applied: false, reason: "superseded" };
     }
 
-    const currentBounds = this.mainWindow.getBounds();
+    const currentBounds = this._getMainWindowBounds();
     const currentDisplay = this._getMainWindowDisplayFor(currentBounds);
 
     if (currentDisplay.id === activeDisplay.id) {
@@ -1891,7 +1914,7 @@ class WindowManager {
       if (clamped.x !== currentBounds.x || clamped.y !== currentBounds.y) {
         const clampedBounds = { ...currentBounds, ...clamped };
         this._clearRendererResizeMask();
-        this.mainWindow.setBounds(clampedBounds);
+        this._setMainWindowBounds(clampedBounds);
         this._lastResizeBounds = { ...clampedBounds };
         this._baseBoundsBeforeResize = null;
         return { applied: true, bounds: clampedBounds };
@@ -1914,7 +1937,7 @@ class WindowManager {
 
   _moveMainWindowTo(newPos) {
     this._clearRendererResizeMask();
-    this.mainWindow.setBounds(newPos);
+    this._setMainWindowBounds(newPos);
     // This is an intentional native move, not a drag. Keep resize restoration
     // from treating the old display's bounds as the user's desired base state.
     this._lastResizeBounds = { ...newPos };
@@ -1937,7 +1960,7 @@ class WindowManager {
       ) {
         return;
       }
-      const currentBounds = this.mainWindow.getBounds();
+      const currentBounds = this._getMainWindowBounds();
       const newPos = WindowPositionUtil.getMainWindowPosition(
         this._getMainWindowDisplayFor(currentBounds),
         { width: currentBounds.width, height: currentBounds.height },
