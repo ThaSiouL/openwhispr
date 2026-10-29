@@ -1,5 +1,7 @@
 const { spawn } = require("child_process");
 const path = require("path");
+const { pathToFileURL } = require("url");
+const DevServerManager = require("./devServerManager");
 
 const MAX_MESSAGE_BYTES = 16384;
 const ACTIONS = new Set(["activate", "cancel", "menu", "hover"]);
@@ -26,10 +28,20 @@ function normalizeOverlaySnapshot(value) {
     "agentMode",
     "interactive",
     "cancelVisible",
+    "collapseToLogo",
+    "waveformVisible",
+    "showExpandChevron",
+    "reducedMotion",
   ]) {
     if (typeof value[key] !== "boolean") return null;
     snapshot[key] = value[key];
   }
+  if (!["light", "dark"].includes(value.theme)) return null;
+  if (!["left", "right"].includes(value.horizontalDirection)) return null;
+  if (!["center", "bottom-left", "bottom-right"].includes(value.dock)) return null;
+  snapshot.theme = value.theme;
+  snapshot.horizontalDirection = value.horizontalDirection;
+  snapshot.dock = value.dock;
   if (
     !value.labels ||
     typeof value.labels.tooltip !== "string" ||
@@ -46,6 +58,7 @@ function normalizeOverlaySnapshot(value) {
 class WaylandOverlay {
   constructor({
     scriptPath,
+    uiUri,
     onReady = () => {},
     onVisibility = () => {},
     onAction = () => {},
@@ -56,6 +69,7 @@ class WaylandOverlay {
   }) {
     this.callbacks = { onReady, onVisibility, onAction, onPosition, onFailure };
     this.scriptPath = scriptPath;
+    this.uiUri = uiUri;
     this.spawnProcess = spawnProcess;
     this.timeoutMs = timeoutMs;
     this.ready = false;
@@ -72,7 +86,7 @@ class WaylandOverlay {
     if (this.child) return;
     this.stopped = false;
     try {
-      this.child = this.spawnProcess("/usr/bin/python3", ["-u", this.scriptPath], {
+      this.child = this.spawnProcess("/usr/bin/python3", ["-u", this.scriptPath, this.uiUri], {
         env: { ...process.env, GDK_BACKEND: "wayland" },
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -142,6 +156,7 @@ class WaylandOverlay {
         this.callbacks.onAction(message.action, message.hovered);
       } else if (
         message.event === "position" &&
+        ["left", "right"].includes(message.horizontalDirection) &&
         this.lastState?.visible &&
         message.revision === this.revision &&
         [message.x, message.y, message.width, message.height].every(
@@ -193,12 +208,12 @@ class WaylandOverlay {
       this.blocked ||
       this.pendingState ||
       now - this.lastAudioAt < 50 ||
-      !Number.isFinite(level)
+      (level !== null && !Number.isFinite(level))
     ) {
       return;
     }
     this.lastAudioAt = now;
-    this._write({ type: "audio", level: Math.max(0, Math.min(1, level)) });
+    this._write({ type: "audio", level: level === null ? null : Math.max(0, Math.min(1, level)) });
   }
 
   _fail(reason) {
@@ -228,9 +243,20 @@ function overlayScriptPath(app) {
     : path.join(__dirname, "..", "..", "resources", "linux", "wayland-overlay.py");
 }
 
+function overlayUiUri(app) {
+  if (!app.isPackaged && process.env.NODE_ENV === "development") {
+    return `${DevServerManager.DEV_SERVER_URL}wayland-overlay.html`;
+  }
+  const ui = app.isPackaged
+    ? path.join(process.resourcesPath, "linux", "wayland-ui", "wayland-overlay.html")
+    : path.join(__dirname, "..", "..", "src", "dist", "wayland-overlay", "wayland-overlay.html");
+  return pathToFileURL(ui).href;
+}
+
 module.exports = {
   WaylandOverlay,
   isWaylandOverlayEnabled,
   normalizeOverlaySnapshot,
   overlayScriptPath,
+  overlayUiUri,
 };

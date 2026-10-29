@@ -1,0 +1,17 @@
+/* Only the native host's transparent viewport and motion override live here.
+   The control, waveform, fusion and tooltip use the normal renderer styles. */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+html[data-overlay-reduced-motion="true"] *,
+html[data-overlay-reduced-motion="true"] *::before,
+html[data-overlay-reduced-motion="true"] *::after {
+  transition: none !important;
+  animation: none !important;
+}

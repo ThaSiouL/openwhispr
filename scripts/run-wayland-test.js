@@ -45,7 +45,10 @@ function prepareProfile(profileRoot, modelRoot) {
 function main() {
   if (process.platform !== "linux") throw new Error("Wayland testing requires Linux.");
   const appDir = path.resolve(__dirname, "..");
-  if (!fs.existsSync(path.join(appDir, "src", "dist", "index.html"))) {
+  if (
+    !fs.existsSync(path.join(appDir, "src", "dist", "index.html")) ||
+    !fs.existsSync(path.join(appDir, "src", "dist", "wayland-overlay", "wayland-overlay.html"))
+  ) {
     throw new Error("Build the renderer first: npm run build:renderer");
   }
   const profileRoot = path.resolve(

@@ -105,6 +105,10 @@
       "to": "linux/wayland-overlay.py"
     },
     {
+      "from": "src/dist/wayland-overlay/",
+      "to": "linux/wayland-ui/"
+    },
+    {
       "from": "src/assets",
       "to": "src/assets",
       "filter": ["**/*", "!fonts/yowza/**"]

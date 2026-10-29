@@ -36,6 +36,7 @@ export function PillTooltip({
       </div>
       {isVisible && !disabled && (
         <div
+          data-pill-tooltip=""
           className={`absolute bottom-full ${alignClass} mb-2 px-1.5 py-1 text-[10px] text-popover-foreground bg-popover border border-border rounded-full z-10 shadow-lg transition-opacity duration-150 whitespace-nowrap`}
         >
           {emoji && <span className="me-1">{emoji}</span>}

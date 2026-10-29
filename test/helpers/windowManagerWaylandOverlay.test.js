@@ -27,6 +27,7 @@ class FakeOverlay {
 class Inert {
   unregisterAll() {}
   cancelPending() {}
+  markManuallyPositioned() {}
 }
 Module._load = function (request, parent, isMain) {
   if (request === "electron") return { app: { on() {} } };
@@ -37,6 +38,7 @@ Module._load = function (request, parent, isMain) {
         normalizeOverlaySnapshot,
         isWaylandOverlayEnabled: () => true,
         overlayScriptPath: () => "/test/overlay.py",
+        overlayUiUri: () => "file:///test/wayland-overlay.html",
       };
     }
     if (
@@ -65,6 +67,13 @@ const snapshot = {
   rich: false,
   suppressed: false,
   expanded: true,
+  collapseToLogo: false,
+  waveformVisible: true,
+  showExpandChevron: false,
+  horizontalDirection: "right",
+  dock: "bottom-right",
+  theme: "dark",
+  reducedMotion: false,
   agentMode: false,
   interactive: true,
   cancelVisible: false,
@@ -176,4 +185,25 @@ test("renderer reload cleanup stops GTK and restores the requested Electron surf
   assert.equal(h.manager._waylandOverlay, null);
   assert.equal(h.manager._waylandOverlaySnapshot, null);
   assert.equal(h.win.isVisible(), true);
+});
+
+test("a native drag mirrors the viewport directly and retains its chosen direction for rich UI", () => {
+  const h = harness();
+  h.helper.becomeReady();
+  h.helper.callbacks.onVisibility(true);
+  let moved;
+  h.manager._moveMainWindowTo = (bounds) => {
+    moved = bounds;
+  };
+  h.helper.callbacks.onPosition({
+    x: 600,
+    y: 400,
+    width: 208,
+    height: 120,
+    horizontalDirection: "right",
+  });
+  assert.deepEqual(moved, { x: 600, y: 400, width: 208, height: 120 });
+  assert.equal(h.manager.getMainWindowHorizontalDirection(), "right");
+  h.manager._assistantPanelOpen = true;
+  assert.equal(h.manager.getMainWindowHorizontalDirection(), "right");
 });

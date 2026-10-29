@@ -4,9 +4,31 @@ import { useEffect, useRef, useState } from "react";
 // GTK receives presentation and sends the same actions as the floating pill.
 export function useWaylandOverlay({ snapshot, onAction, getAudioLevel, isRecording }) {
   const [enabled, setEnabled] = useState(false);
+  const [appearance, setAppearance] = useState(() => ({
+    theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+    reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  }));
   const actionRef = useRef(onAction);
   actionRef.current = onAction;
-  const signature = JSON.stringify(snapshot);
+  const signature = JSON.stringify({ ...snapshot, ...appearance });
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () =>
+      setAppearance({
+        theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
+        reducedMotion: motion.matches,
+      });
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    motion.addEventListener("change", update);
+    update();
+    return () => {
+      observer.disconnect();
+      motion.removeEventListener("change", update);
+    };
+  }, [enabled]);
 
   useEffect(() => {
     const api = window.electronAPI;
@@ -32,7 +54,8 @@ export function useWaylandOverlay({ snapshot, onAction, getAudioLevel, isRecordi
     if (!enabled || !isRecording || snapshot.rich) return undefined;
     const sample = () => {
       const level = getAudioLevel();
-      if (Number.isFinite(level)) window.electronAPI.waylandOverlayAudioLevel(level);
+      if (level === null || Number.isFinite(level))
+        window.electronAPI.waylandOverlayAudioLevel(level);
     };
     sample();
     const timer = setInterval(sample, 50);

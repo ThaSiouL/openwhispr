@@ -24,9 +24,11 @@ function harness(options = {}) {
   const failures = [];
   const actions = [];
   const visibility = [];
+  const positions = [];
   let spawnOptions;
   const overlay = new WaylandOverlay({
     scriptPath: "/test/overlay.py",
+    uiUri: "file:///test/wayland-overlay.html",
     spawnProcess: (command, args, opts) => {
       spawnOptions = { command, args, ...opts };
       return child;
@@ -34,6 +36,7 @@ function harness(options = {}) {
     onFailure: (reason) => failures.push(reason),
     onAction: (...args) => actions.push(args),
     onVisibility: (value) => visibility.push(value),
+    onPosition: (value) => positions.push(value),
     timeoutMs: options.timeoutMs || 1000,
   });
   overlay.start();
@@ -45,6 +48,7 @@ function harness(options = {}) {
     failures,
     actions,
     visibility,
+    positions,
     receive,
     spawnOptions,
     killed: () => killed,
@@ -56,6 +60,13 @@ const snapshot = {
   rich: false,
   suppressed: false,
   expanded: true,
+  collapseToLogo: false,
+  waveformVisible: true,
+  showExpandChevron: false,
+  horizontalDirection: "right",
+  dock: "bottom-right",
+  theme: "dark",
+  reducedMotion: false,
   agentMode: false,
   interactive: true,
   cancelVisible: true,
@@ -75,6 +86,8 @@ test("snapshot validation preserves presentation states and rejects oversized la
   assert.deepEqual(normalizeOverlaySnapshot({ ...snapshot, transcript: "private" }), snapshot);
   assert.equal(normalizeOverlaySnapshot({ ...snapshot, state: "arbitrary" }), null);
   assert.equal(normalizeOverlaySnapshot({ ...snapshot, rich: 0 }), null);
+  assert.equal(normalizeOverlaySnapshot({ ...snapshot, theme: "system" }), null);
+  assert.equal(normalizeOverlaySnapshot({ ...snapshot, waveformVisible: "true" }), null);
   assert.equal(
     normalizeOverlaySnapshot({
       ...snapshot,
@@ -136,6 +149,26 @@ test("backpressure coalesces state and drops meter traffic instead of queuing it
   h.overlay.stop();
 });
 
+test("native viewport positions retain their chosen direction and reject stale geometry", () => {
+  const h = harness();
+  h.receive({ event: "ready" });
+  h.overlay.update({ ...snapshot, visible: true });
+  const position = {
+    event: "position",
+    revision: 1,
+    x: 600,
+    y: 400,
+    width: 208,
+    height: 120,
+    horizontalDirection: "right",
+  };
+  h.receive(position);
+  h.receive({ ...position, revision: 0 });
+  h.receive({ ...position, horizontalDirection: "center" });
+  assert.deepEqual(h.positions, [position]);
+  h.overlay.stop();
+});
+
 test("meter messages are clamped and limited to 20 per second", () => {
   const h = harness();
   h.receive({ event: "ready" });
@@ -143,9 +176,11 @@ test("meter messages are clamped and limited to 20 per second", () => {
   h.overlay.audio(2, 100);
   h.overlay.audio(0.5, 101);
   h.overlay.audio(-1, 150);
+  h.overlay.audio(null, 200);
   assert.deepEqual(h.writes.slice(1), [
     { type: "audio", level: 1 },
     { type: "audio", level: 0 },
+    { type: "audio", level: null },
   ]);
   h.overlay.stop();
 });

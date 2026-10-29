@@ -12,6 +12,7 @@ const {
   isWaylandOverlayEnabled,
   normalizeOverlaySnapshot,
   overlayScriptPath,
+  overlayUiUri,
 } = require("./waylandOverlay");
 // Aliased: this class has an openExternalUrl method wrapping the helper.
 const { openExternalUrl: openUrlInExternalBrowser } = require("./externalUrlOpener");
@@ -138,6 +139,7 @@ class WindowManager {
     this._waylandOverlaySnapshot = null;
     this._waylandOverlayFailed = false;
     this._waylandOverlayVisible = false;
+    this._waylandOverlayManualDirection = null;
 
     app.on("before-quit", () => {
       this.isQuitting = true;
@@ -222,6 +224,7 @@ class WindowManager {
     if (!this._waylandOverlay) {
       const overlay = new WaylandOverlay({
         scriptPath: overlayScriptPath(app),
+        uiUri: overlayUiUri(app),
         onReady: () => this._syncWaylandOverlay(),
         onVisibility: (visible) => {
           this._waylandOverlayVisible = visible;
@@ -234,15 +237,15 @@ class WindowManager {
             win.webContents.send("wayland-overlay-action", action, hovered);
           }
         },
-        onPosition: ({ x, y, width, height }) => {
+        onPosition: ({ x, y, width, height, horizontalDirection }) => {
           const win = this.mainWindow;
           if (!win || win.isDestroyed() || !this._usesWaylandOverlay()) return;
-          const bounds = win.getBounds();
-          const left = this.getMainWindowHorizontalDirection() === "left";
+          this._waylandOverlayManualDirection = horizontalDirection;
           this._moveMainWindowTo({
-            ...bounds,
-            x: Math.round(left ? x - 12 : x + width + 12 - bounds.width),
-            y: Math.round(y + height + 12 - bounds.height),
+            x: Math.round(x),
+            y: Math.round(y),
+            width: Math.round(width),
+            height: Math.round(height),
           });
           this._mainWindowPlacementCoordinator.markManuallyPositioned();
         },
@@ -260,7 +263,7 @@ class WindowManager {
   }
 
   setWaylandOverlayAudioLevel(level) {
-    if (typeof level === "number") this._waylandOverlay?.audio(level);
+    if (level === null || typeof level === "number") this._waylandOverlay?.audio(level);
   }
 
   _usesWaylandOverlay() {
@@ -285,6 +288,7 @@ class WindowManager {
       visible: Boolean(native && this._dictationPanelRequestedVisible && !snapshot.suppressed),
       position: this._panelStartPosition,
       monitor: display?.bounds || null,
+      viewport: WINDOW_SIZES.BASE,
     });
     this._applyWaylandOverlayHostVisibility();
   }
@@ -807,19 +811,15 @@ class WindowManager {
       currentBounds.height === WINDOW_SIZES.BASE.height
     ) {
       this._baseBoundsBeforeResize = { ...currentBounds };
-      this._activeHorizontalDirection = resolveHorizontalWindowDirection(
-        currentBounds,
-        display,
-        this._panelStartPosition
-      );
+      this._activeHorizontalDirection =
+        this._waylandOverlayManualDirection ||
+        resolveHorizontalWindowDirection(currentBounds, display, this._panelStartPosition);
     }
 
     if (sizeKey !== "BASE" && !this._activeHorizontalDirection) {
-      this._activeHorizontalDirection = resolveHorizontalWindowDirection(
-        currentBounds,
-        display,
-        this._panelStartPosition
-      );
+      this._activeHorizontalDirection =
+        this._waylandOverlayManualDirection ||
+        resolveHorizontalWindowDirection(currentBounds, display, this._panelStartPosition);
     }
     const position =
       this._panelStartPosition === "center"
@@ -1487,6 +1487,9 @@ class WindowManager {
   }
 
   getMainWindowHorizontalDirection() {
+    // Dock compensation moves the viewport across the midpoint again. Keep
+    // the drag's chosen side through that correction and the rich UI handoff.
+    if (this._waylandOverlayManualDirection) return this._waylandOverlayManualDirection;
     if (!this.mainWindow || this.mainWindow.isDestroyed()) {
       return this._panelStartPosition === "bottom-left" ? "left" : "right";
     }
@@ -1507,6 +1510,7 @@ class WindowManager {
   setPanelStartPosition(position) {
     this._panelStartPosition = position || "bottom-right";
     this._mainWindowPlacementCoordinator.resetManualPosition();
+    this._waylandOverlayManualDirection = null;
     this._activeHorizontalDirection = null;
     // Reposition the window immediately
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
@@ -1592,6 +1596,7 @@ class WindowManager {
         Math.abs(draggedBounds.x - start.x) > DRAG_MOVE_TOLERANCE_PX ||
         Math.abs(draggedBounds.y - start.y) > DRAG_MOVE_TOLERANCE_PX;
       if (moved) {
+        this._waylandOverlayManualDirection = null;
         this._mainWindowPlacementCoordinator.markManuallyPositioned();
         this._baseBoundsBeforeResize = null;
         this._lastResizeBounds = { ...draggedBounds };
@@ -2454,6 +2459,7 @@ class WindowManager {
     this.mainWindow.on("move", () => this.positionAgentDictationPill());
 
     this.mainWindow.on("closed", () => {
+      this._waylandOverlayManualDirection = null;
       this.stopWaylandOverlay();
       this.dragManager.cleanup();
       const pillWindow = this.agentDictationPillWindow;

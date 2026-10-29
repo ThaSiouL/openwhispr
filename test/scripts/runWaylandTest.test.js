@@ -51,7 +51,12 @@ test(
       }
       fs.rmSync(root, { recursive: true, force: true });
     });
-    for (const directory of ["scripts", "src/helpers", "src/dist", "node_modules/electron"]) {
+    for (const directory of [
+      "scripts",
+      "src/helpers",
+      "src/dist/wayland-overlay",
+      "node_modules/electron",
+    ]) {
       fs.mkdirSync(path.join(root, directory), { recursive: true });
     }
     for (const file of [
@@ -63,6 +68,10 @@ test(
       fs.copyFileSync(path.resolve(__dirname, "../..", file), path.join(root, file));
     }
     fs.writeFileSync(path.join(root, "src/dist/index.html"), "test fixture");
+    fs.writeFileSync(
+      path.join(root, "src/dist/wayland-overlay/wayland-overlay.html"),
+      "test fixture"
+    );
     const executable = path.join(root, "electron-stub");
     fs.writeFileSync(
       path.join(root, "node_modules/electron/index.js"),

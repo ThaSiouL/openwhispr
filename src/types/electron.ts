@@ -1561,9 +1561,16 @@ declare global {
         agentMode: boolean;
         interactive: boolean;
         cancelVisible: boolean;
+        collapseToLogo: boolean;
+        waveformVisible: boolean;
+        showExpandChevron: boolean;
+        horizontalDirection: "left" | "right";
+        dock: "center" | "bottom-left" | "bottom-right";
+        theme: "light" | "dark";
+        reducedMotion: boolean;
         labels: { tooltip: string; cancel: string };
       }) => void;
-      waylandOverlayAudioLevel: (level: number) => void;
+      waylandOverlayAudioLevel: (level: number | null) => void;
       onWaylandOverlayAction: (
         callback: (action: "activate" | "cancel" | "menu" | "hover", hovered?: boolean) => void
       ) => () => void;
